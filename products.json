@@ -1,0 +1,413 @@
+{
+  "amazon": [
+    {
+      "id": "01",
+      "category": "Headphones / Audio",
+      "name": "boAt Rockerz 450/450R, 15 HRS Battery, 40mm Drivers, Padded Ear Cushions, Integrated Controls, Dual Modes, Bluetooth Headphones, Wireless Headphone with Mic (Luscious Black)",
+      "image": "a01.jpg",
+      "mrp": 3999,
+      "price": 1697,
+      "discount": 57,
+      "link": "https://amzn.in/d/0iUQRBZL"
+    },
+    {
+      "id": "02",
+      "category": "Headphones / Audio",
+      "name": "boAt Rockerz 512 ANC,(~40dB) Hybrid ANC, 80H Battery, 40mm Drivers, 40ms Low Latency, ENx Tech, App Support, Bluetooth Headphones, Wireless Headphone with Mic (Cosmic Black)",
+      "image": "a02.jpg",
+      "mrp": 7999,
+      "price": 2899,
+      "discount": 64,
+      "link": "https://amzn.in/d/06rAvadv"
+    },
+    {
+      "id": "04",
+      "category": "Headphones / Audio",
+      "name": "boAt Rockerz 650 Pro, Touch/Swipe Controls, Dolby Audio, 80Hrs Battery, 2Mics ENx, Fast Charge, App Support, Dual Pair, Bluetooth Over Ear Headphones with Mic (Iris Black)",
+      "image": "a03.jpg",
+      "mrp": 8999,
+      "price": 2799,
+      "discount": 69,
+      "link": "https://amzn.in/d/04KGMzWx"
+    },
+    {
+      "id": "04",
+      "category": "Headphones / Audio",
+      "name": "soundcore Q20i by Anker, Over Ear Headphones Bluetooth Wireless",
+      "image": "a04.jpg",
+      "mrp": 8499,
+      "price": 4999,
+      "discount": 41,
+      "link": "https://amzn.in/d/09EFBzlM"
+    },
+    {
+      "id": "04",
+      "category": "Headphones / Audio",
+      "name": "Zebronics Zeb-Storm Wired On Ear Headphone with 3.5mm Jack, Built in Microphone for Calling, 1.5 Meter Cable, Soft Ear Cushion, Adjustable Headband, Foldable Ear Cups and Lightweight Design (Blue)",
+      "image": "a05.jpg",
+      "mrp": 799,
+      "price": 449,
+      "discount": 44,
+      "link": "https://amzn.in/d/0ffaYix7"
+    },
+    {
+      "id": "06",
+      "category": "Smartwatches",
+      "name": "Noise Pulse 2 Max 1.85\" Display, Bluetooth Calling Smart Watch, 10 Days Battery, 550 NITS Brightness, Smart DND, 100 Sports Modes, Smartwatch for Men and Women (Jet Black)",
+      "image": "a06.jpg",
+      "mrp": 5999,
+      "price": 1499,
+      "discount": 75,
+      "link": "https://amzn.in/d/02IkhGnN"
+    },
+    {
+      "id": "07",
+      "category": "Smartwatches",
+      "name": "Noise Pulse 4 Max Smart Watch with AI Create (India's 1st Ever with Unlimited Watch Faces), AI Search, 1.96\" AMOLED Display, Functional Crown, Premium Metallic Finish, Health Suite (Elite Black)",
+      "image": "a07.jpg",
+      "mrp": 4999,
+      "price": 2599,
+      "discount": 48,
+      "link": "https://amzn.in/d/03yxVwv3"
+    },
+    {
+      "id": "08",
+      "category": "Smartwatches",
+      "name": "NoiseFit Halo Limited Edition 1.43\" AMOLED Display, Bluetooth Calling Round Dial Smart Watch, Premium Metallic Build, Always on Display, Smart Gesture Control, 100 Sports Modes (Midnight Alloy)",
+      "image": "a08.jpg",
+      "mrp": 6999,
+      "price": 2999,
+      "discount": 57,
+      "link": "https://amzn.in/d/0bYo8BKN"
+    },
+    {
+      "id": "09",
+      "category": "Smartwatches",
+      "name": "boAt Wave Call 3 Smartwatch 1.83” HD Display with Animated Watch Faces; BT Calling, Functional Crown, Multiple Sports Modes, IP68, HR, SpO2 Monitor, Smart Watches for Men & Women (Bold Black)",
+      "image": "a09.jpg",
+      "mrp": 6999,
+      "price": 1399,
+      "discount": 80,
+      "link": "https://amzn.in/d/0gOXEGxa"
+    },
+    {
+      "id": "10",
+      "category": "Smartwatches",
+      "name": "boAt Lunar Discovery – 2026 Edition w/ 1.39\" (3.5 cm) HD Display, Bluetooth Calling, Emergency SOS, HR, SpO2 & Sleep Tracking Smart Watch for Men & Women (Active Black)",
+      "image": "a10.jpg",
+      "mrp": 8499,
+      "price": 1199,
+      "discount": 86,
+      "link": "https://amzn.in/d/08QuiHb2"
+    },
+    {
+      "id": "11",
+      "category": "Kitchen Appliances",
+      "name": "Cookwell Bullet Mixer Grinder (3 Jar, 2 Blade, Silver) - 600 Watts - 2 Year Warranty",
+      "image": "a11.jpg",
+      "mrp": 5000,
+      "price": 1999,
+      "discount": 60,
+      "link": "https://amzn.in/d/0iOFAJWD"
+    },
+    {
+      "id": "12",
+      "category": "Kitchen Appliances",
+      "name": "amazon basics Electric Egg Boiler | 350 Watt | Boils Upto 7 Eggs | Automatic Operation, 3 Boiling Modes | Overheat Protection | Stainless Steel Heating Plate, Measuring Cup | 75ml | Plastic | White",
+      "image": "a12.jpg",
+      "mrp": 650,
+      "price": 389,
+      "discount": 40,
+      "link": "https://amzn.in/d/0gfsKxCG"
+    },
+    {
+      "id": "13",
+      "category": "Kitchen Appliances",
+      "name": "Philips HL7703/03, Mixer grinder 1000W, White",
+      "image": "a13.jpg",
+      "mrp": 8595,
+      "price": 5899,
+      "discount": 31,
+      "link": "https://amzn.in/d/076PnP4u"
+    },
+    {
+      "id": "14",
+      "category": "Kitchen Appliances",
+      "name": "Prestige 1.5L PKOSS Stainless Steel Electric Kettle | 1350 Watts| Elegant Design | Cool-touch Handle and Lid | Automatic Cut-Off and Single-Touch Lid Locking | Black | 1Y Warranty | ISI Certified",
+      "image": "a14.jpg",
+      "mrp": 1445,
+      "price": 699,
+      "discount": 52,
+      "link": "https://amzn.in/d/0ibUuO9u"
+    },
+    {
+      "id": "15",
+      "category": "Kitchen Appliances",
+      "name": "CÜRAA Manual Vegetable Chopper for Kitchen | ChopLab Lite By Chef Sanjyot Keer | Mini Chopper for Kitchen Use with Stainless Steel Blades – 650ml (Red)",
+      "image": "a15.jpg",
+      "mrp": 999,
+      "price": 629,
+      "discount": 37,
+      "link": "https://amzn.in/d/0iTxCfrn"
+    },
+    {
+      "id": "16",
+      "category": "toys",
+      "name": "Amazon Brand - Jam & Honey Remote Control Car for Kids | High-Speed RC Car with Rechargeable Lithium Battery | Type-C Charging | LED Headlights | Red",
+      "image": "a16.jpg",
+      "mrp": 1999,
+      "price": 649,
+      "discount": 68,
+      "link": "https://amzn.in/d/05kLM1nE"
+    },
+    {
+      "id": "17",
+      "category": "toys",
+      "name": "Lifelong Bunny Manual Push Ride-On Toy Car with Back Support for Boys & Girls 1-4 Yrs, Distraction-Free, Non-Musical, Easy Installation, 50kg Capacity, Steering Wheel, Indoor Outdoor (LLCBBR01",
+      "image": "a17.jpg",
+      "mrp": 1999,
+      "price": 849,
+      "discount": 58,
+      "link": "https://amzn.in/d/03scggRk"
+    },
+    {
+      "id": "18",
+      "category": "toys",
+      "name": "Mirana Vande Bharat Bullet Train Toy Set for Kids, Basic 43 pcs",
+      "image": "a18.jpg",
+      "mrp": 599,
+      "price": 589,
+      "discount": 2,
+      "link": "https://amzn.in/d/0hYg0jju"
+    },
+    {
+      "id": "19",
+      "category": "toys",
+      "name": "GRAPHENE 4X4 Remote Control Drift Stunt Car 4WD Racing Fall Resistant RC Car 360° Rotating Dual Sided Climbing High-Speed Tumbling Cross-Country Battle Off Road Rechargeable Adults Boy Girl",
+      "image": "a19.jpg",
+      "mrp": 2468,
+      "price": 899,
+      "discount": 64,
+      "link": "https://amzn.in/d/03LAx8QM"
+    },
+    {
+      "id": "20",
+      "category": "toys",
+      "name": "MBK 100-Piece Construction Blocks Set – Fun and Educational Building Toys for Children 2-5 Years_(CH)",
+      "image": "a20.jpg",
+      "mrp": 899,
+      "price": 129,
+      "discount": 86,
+      "link": "https://amzn.in/d/0cSayElI"
+    },
+    {
+      "id": "21",
+      "category": "Mobile Accessories",
+      "name": "Portronics 80W Dual Output Fast Car Charger with Type-C PD & USB, LED Indicator, Charging Adapter Compatible with Cars for iPhone & Android Smartphone, Smartwatch, Earbud, Power Bank (Black)",
+      "image": "a21.jpg",
+      "mrp": 1499,
+      "price": 470,
+      "discount": 69,
+      "link": "https://amzn.in/d/0fCNOH1R"
+    },
+    {
+      "id": "22",
+      "category": "Mobile Accessories",
+      "name": "Portronics Clamp M4 Car Phone Holder Stand with 360 Degree Rotation, Strong Grip, Suction Cup Mount, Single Hand Use, Shockproof Build, Mobile Stand for Car (Black)",
+      "image": "a22.jpg",
+      "mrp": 299,
+      "price": null,
+      "discount": null,
+      "link": "https://amzn.in/d/0cpr1DZf"
+    },
+    {
+      "id": "23",
+      "category": "Mobile Accessories",
+      "name": "Duracell 38W Fast Car Charger Adapter with Dual Output. Quick Charge, Type C PD 20W & Qualcomm Certified 3.0 Compatible for iPhone, All Smartphones, Tablets & More (Copper & Black)",
+      "image": "a23.jpg",
+      "mrp": 1699,
+      "price": 867,
+      "discount": 49,
+      "link": "https://amzn.in/d/0h7tvsb9"
+    },
+    {
+      "id": "24",
+      "category": "Mobile Accessories",
+      "name": "Aquira 4-in-1 Retractable Car Charger 120W Fast Car Charger with Type-C & Lightning Retractable Cables, USB-C (3A) + USB-A (2.4A) Ports, LED Voltage Display, 180° Adjustable Head, 12V-24V",
+      "image": "a24.jpg",
+      "mrp": 1699,
+      "price": 729,
+      "discount": 58,
+      "link": "https://amzn.in/d/01SBOLQR"
+    },
+    {
+      "id": "25",
+      "category": "Mobile Accessories",
+      "name": "OQTIQ SUCGLES Easy One Touch Car Phone Holder, Dashboard & Windshield Mobile Mount with Suction Cup, Telescopic Arm & 360° Rotation, Universal Stand for iPhone, Samsung & All Smartphones",
+      "image": "a25.jpg",
+      "mrp": 1999,
+      "price": 499,
+      "discount": 75,
+      "link": "https://amzn.in/d/0g3VKOC8"
+    }
+  ],
+
+  "flipkart": [
+    {
+      "id": "01",
+      "category": "Headphones / Audio",
+      "name": "boAt Rockerz 413,60H Battery,ENx, BEAST Mode, Dual Pair, Stream Ad Free Music via App Bluetooth Headset (Oceana Blue, On the Ear)",
+      "image": "F01.webp",
+      "mrp": 2990,
+      "price": 1299,
+      "discount": 57,
+      "link": "https://dl.flipkart.com/s/6baNV0NNNN"
+    },
+    {
+      "id": "02",
+      "category": "Smartwatches",
+      "name": "Noise Loop 1.85'' Display with Advanced Bluetooth Calling, 550 Nits Brightness Smartwatch (Black Strap, Regular)",
+      "image": "F02.webp",
+      "mrp": 6999,
+      "price": 1099,
+      "discount": 84,
+      "link": "https://dl.flipkart.com/s/op4!Y3uuuN"
+    },
+    {
+      "id": "03",
+      "category": "Kitchen Appliances",
+      "name": "cookwell Bullet 600 W Juicer Mixer Grinder (Push + Knob | 3 Jars | Metallic Silver)",
+      "image": "F03.webp",
+      "mrp": 5000,
+      "price": 1999,
+      "discount": 60,
+      "link": "https://dl.flipkart.com/s/opKNPauuuN"
+    },
+    {
+      "id": "04",
+      "category": "toys",
+      "name": "Amazon Brand - Jam & Honey Remote Control Car for Kids | High-Speed RC Car with Rechargeable Lithium Battery | Type-C Charging | LED Headlights | Red",
+      "image": "F04.webp",
+      "mrp": 1999,
+      "price": 1145,
+      "discount": 43,
+      "link": "https://dl.flipkart.com/s/63zhYUNNNN"
+    },
+    {
+      "id": "05",
+      "category": "Mobile Accessories",
+      "name": "DURASTRAND SuperVOOC 8 A 3 Port Mobile Charger with Detachable Cable (Black)",
+      "image": "F05.webp",
+      "mrp": 1599,
+      "price": 436,
+      "discount": 73,
+      "link": "https://dl.flipkart.com/s/6YtnSGNNNN"
+    }
+  ],
+
+  "meesho": [
+    {
+      "id": "01",
+      "category": "Headphones / Audio",
+      "name": "P 47 Wireless Bluetooth Sports Headphones with Microphone | On-Ear Bluetooth Headset for Active Lifestyles | Ideal for Gym, Running, and Travel",
+      "image": "m01.png",
+      "mrp": 335,
+      "price": 232,
+      "discount": 431,
+      "link": "https://www.meesho.com/s/p/hwcfj3?utm_source=s_cc"
+    },
+    {
+      "id": "02",
+      "category": "Smartwatches",
+      "name": "Smart Watch 1.99\" Series 8 HD Display - Campatible for IOS & Android -Bluetooth Call, Fitness Tracker, Voice Android -Bluetooth Call, Fitness Tracker, Voice Assistance| multicolor",
+      "image": "m02.png",
+      "mrp": 533,
+      "price": null,
+      "discount": null,
+      "link": "https://www.meesho.com/s/p/hugo5k?utm_source=s_wb"
+    },
+    {
+      "id": "03",
+      "category": "Kitchen Appliances",
+      "name": "Square Kitchen Storage Containers | Kitchen Organization Plastic Containers | BPA-free plastic | container (Pack of 12)",
+      "image": "m03.png",
+      "mrp": 382,
+      "price": null,
+      "discount": null,
+      "link": "https://www.meesho.com/s/p/aepa8j?utm_source=s_wb"
+    },
+    {
+      "id": "04",
+      "category": "toys",
+      "name": "Dancing Cactus Toy Kids Talking Singing Wriggle Children Plush Electronic Toys Baby Voice Recording Repeats What baby Say LED Lights, Wriggling Electronic Toy for Kids & Toddlers, Gift for Boys & Girls by PACKNSTORE",
+      "image": "me04.png",
+      "mrp": 365,
+      "price": null,
+      "discount": null,
+      "link": "https://www.meesho.com/s/p/8rpn5r?utm_source=s_wb"
+    },
+    {
+      "id": "05",
+      "category": "bile Accessories",
+      "name": "Selfie Stick, Extendable Selfie Stick with Tripod Stand and Detachable Wireless Bluetooth Remote",
+      "image": "m05.png",
+      "mrp": 203,
+      "price": null,
+      "discount": null,
+      "link": "https://www.meesho.com/s/p/7eznqu?utm_source=s_wb"
+    }
+  ],
+
+  "myntra": [
+    {
+      "id": "01",
+      "category": "Headphones / Audio",
+      "name": "zusix PEBBLE Bluetooth TWS Earbuds with 55H Playback, 13mm Drivers & Charging Case",
+      "image": "me01.png",
+      "mrp": 3999,
+      "price": 494,
+      "discount": 88,
+      "link": "https://www.myntra.com/headphones/zusix/zusix-pebble-bluetooth-tws-earbuds-with-55h-playback-13mm-drivers--charging-case/45769134/buy"
+    },
+    {
+      "id": "02",
+      "category": "Smartwatches",
+      "name": "sekyo Magic Pro 4G Kids Smart Watch",
+      "image": "me02.png",
+      "mrp": 8999,
+      "price": 6973,
+      "discount": 23,
+      "link": "https://www.myntra.com/smart-watches/sekyo/sekyo-magic-pro-4g-kids-smart-watch/38280784/buy"
+    },
+    {
+      "id": "03",
+      "category": "Kitchen Appliances",
+      "name": "MAHARAJA WHITELINE Maharaja Whiteline Novamixx MX-277 White Stainless Steel Easy To Use Knob 3 Jars Wet and Dry Grinder-500W",
+      "image": "me03.png",
+      "mrp": 3399,
+      "price": 1597,
+      "discount": 53,
+      "link": "https://www.myntra.com/juicer-mixer-grinder/maharaja+whiteline/maharaja-whiteline-novamixx-mx-277-white-stainless-steel-easy-to-use-knob-3-jars-wet-and-dry-grinder-500w/30041068/buy"
+    },
+    {
+      "id": "04",
+      "category": "toys",
+      "name": "WEMBLEY Wembley 1:18 Scale Remote Control Rock Crawler Car",
+      "image": "me04.png",
+      "mrp": 1599,
+      "price": 1079,
+      "discount": 33,
+      "link": "https://www.myntra.com/toy-vehicles/wembley/wembley-118-scale-remote-control-rock-crawler-car/33698119/buy"
+    },
+    {
+      "id": "05",
+      "category": "Mobile Accessories",
+      "name": "Mayne Mobile Selfie Stick",
+      "image": "me05.png",
+      "mrp": 599,
+      "price": 330,
+      "discount": "269OFF",
+      "link": "https://www.myntra.com/mobile-accessories/mayne/mayne-mobile-selfie-stick/43492388/buy"
+    }
+  ]
+}
