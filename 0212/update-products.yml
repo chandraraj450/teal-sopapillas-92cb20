@@ -1,0 +1,54 @@
+name: Update products.json
+
+on:
+  schedule:
+    - cron: "30 1 * * *"        # every day 01:30 UTC = 07:00 IST
+  workflow_dispatch:             # "Run workflow" button
+
+permissions:
+  contents: write                # needed to push products.json
+
+concurrency:
+  group: update-products
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install browser (only when USE_BROWSER=1)
+        if: ${{ vars.USE_BROWSER == '1' }}
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Fetch products
+        env:
+          PROXY_URL: ${{ secrets.PROXY_URL }}      # optional
+          USE_BROWSER: ${{ vars.USE_BROWSER }}     # optional
+          PER_CATEGORY: ${{ vars.PER_CATEGORY || '6' }}
+        run: python fetch_products.py
+
+      - name: Commit and push if products.json changed
+        run: |
+          if git diff --quiet -- products.json; then
+            echo "No changes in products.json"
+            exit 0
+          fi
+          git config user.name  "crack-shopping-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add products.json
+          git commit -m "chore: auto-update products.json ($(date -u +%F))"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push

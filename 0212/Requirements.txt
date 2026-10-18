@@ -1,0 +1,5 @@
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+# Optional (only if you set USE_BROWSER=1):
+# playwright>=1.45
