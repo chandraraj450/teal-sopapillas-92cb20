@@ -1,18 +1,195 @@
 /* ============================================================
    CRACK SHOPPING - Load products.json  (single loader)
+   ------------------------------------------------------------
+   - products.json ek baar load hota hai (HTTP cache revalidate).
+   - Har outgoing link URL-cleaner se saaf hota hai (purane / galat
+     tracking parameters hatte hain, sahi affiliate params lagte hain).
+   - Ab koi dummy / nakli comparison price nahi banta. Dusre store par
+     product tabhi dikhta hai jab woh sach me us store ke data me ho
+     (matching logic: CrackShoppingEngine.findStoreMatches).
    ============================================================ */
 
 var PRODUCTS_JSON_URL = 'products.json';
 
 window.CRACK_SHOPPING_PRODUCT_DATASET = [];
 
+/* ------------------------------------------------------------
+   SITE CONFIG  (yahin se settings badlein)
+   ------------------------------------------------------------ */
+window.CRACK_SHOPPING_CONFIG = {
+    // Dusre store par "same product" maanne ke liye minimum similarity (0-1).
+    // Zyada = sakht (kam, par pakke matches). Kam = zyada matches, galat match ka risk.
+    COMPARE_MIN_SIMILARITY: 0.6,
+
+    // Smart Comparison ke 3 sakht niyam (findStoreMatches):
+    //  1) category + subcategory bilkul same
+    //  2) naam ke kam se kam 65% shabd match (60-70% ka range)
+    //  3) keemat me 20% se zyada fark nahi
+    COMPARE_MIN_NAME_MATCH: 0.65,
+    COMPARE_MAX_PRICE_DIFF: 0.2,
+
+    // Ek baar me kitne "Suggested Products" load hon (infinite scroll).
+    SUGGESTIONS_PAGE_SIZE: 12,
+
+    // Affiliate parameters. KHALI ('') chhodne par link bilkul saaf (clean) jaata hai
+    // aur Cuelinks (cuelinksv2.js) click par use khud monetize kar deta hai.
+    // Agar kisi store ke liye seedha apna tag lagana hai to yahan bharein, jaise:
+    //   amazon:   { tag: 'yourtag-21' }
+    //   flipkart: { affid: 'yourflipkartid' }
+    AFFILIATE: {
+        amazon:   { tag: '' },
+        flipkart: { affid: '' },
+        meesho:   {},
+        myntra:   {}
+    }
+};
+
+/* ------------------------------------------------------------
+   URL CLEANER + TRACKING SANITIZER
+   ------------------------------------------------------------ */
+window.CRACK_SHOPPING_URL = (function () {
+
+    var CONFIG = window.CRACK_SHOPPING_CONFIG;
+
+    var STORE_HOSTS = [
+        ['amazon',   /(^|\.)(amazon\.[a-z.]+|amzn\.(in|to|com|eu))$/i],
+        ['flipkart', /(^|\.)(flipkart\.com|fkrt\.(it|cc|in))$/i],
+        ['meesho',   /(^|\.)meesho\.com$/i],
+        ['myntra',   /(^|\.)myntra\.com$/i]
+    ];
+
+    // Jin parameters ko hum hamesha hata dete hain (kisi bhi aise store ke liye
+    // jiska "keep-list" neeche define nahi hai).
+    var TRACKING_PARAM = /^(utm_.*|fbclid|gclid|dclid|msclkid|yclid|igshid|mc_cid|mc_eid|srsltid|ref|ref_|tag|linkcode|linkid|creative|creativeasin|camp|ascsubtag|aff.*|otracker.*|cuelinks.*|cid|clickid|irclickid|subid\d*|source|campaign|medium|share_id|cmpid|sid|pf_rd_.*|pd_rd_.*|qid|sr|crid|sprefix|keywords)$/i;
+
+    var ASIN_RE = /(?:\/dp\/|\/gp\/product\/|\/gp\/aw\/d\/|\/gp\/offer-listing\/|\/product\/)([A-Z0-9]{10})(?=[/?#]|$)/i;
+
+    function detectStoreFromHost(host) {
+        for (var i = 0; i < STORE_HOSTS.length; i++) {
+            if (STORE_HOSTS[i][1].test(host || '')) return STORE_HOSTS[i][0];
+        }
+        return '';
+    }
+
+    function parseUrl(raw) {
+        var s = String(raw == null ? '' : raw).trim();
+        if (!s) return null;
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+            if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) {
+                s = 'https://' + s;
+            } else {
+                return null;
+            }
+        }
+        var u;
+        try { u = new URL(s); } catch (e) { return null; }
+        // javascript:, data:, file: etc. kabhi allow nahi
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+        return u;
+    }
+
+    // Product link ko saaf karta hai. Galat / khaali / unsafe link par '' deta hai.
+    function cleanProductUrl(raw, storeHint) {
+        var u = parseUrl(raw);
+        if (!u) return '';
+        u.protocol = 'https:';
+        u.hash = '';
+        u.username = '';
+        u.password = '';
+
+        var store = detectStoreFromHost(u.hostname) || storeHint || '';
+        var keep = null;   // null => sirf generic tracking hatao; array => sirf yehi parameters rakho
+
+        if (store === 'amazon') {
+            var m = u.pathname.match(ASIN_RE);
+            if (m) { u.pathname = '/dp/' + m[1].toUpperCase(); }
+            keep = [];
+        } else if (store === 'flipkart') {
+            keep = /\/p\/itm/i.test(u.pathname) ? ['pid', 'lid'] : [];
+        } else if (store === 'meesho' || store === 'myntra') {
+            keep = [];
+        }
+
+        Array.from(u.searchParams.keys()).forEach(function (key) {
+            var lower = key.toLowerCase();
+            var drop = keep ? keep.indexOf(lower) === -1 : TRACKING_PARAM.test(lower);
+            if (drop) u.searchParams.delete(key);
+        });
+
+        return u.toString();
+    }
+
+    // Config me bhare sahi affiliate parameters lagata hai (khaali ho to kuch nahi).
+    function applyAffiliateParams(urlStr, store) {
+        var cfg = (CONFIG.AFFILIATE || {})[store];
+        if (!cfg || !urlStr) return urlStr;
+        try {
+            var u = new URL(urlStr);
+            var changed = false;
+            Object.keys(cfg).forEach(function (key) {
+                if (cfg[key]) { u.searchParams.set(key, cfg[key]); changed = true; }
+            });
+            return changed ? u.toString() : urlStr;
+        } catch (e) {
+            return urlStr;
+        }
+    }
+
+    function sanitizeOutgoingUrl(raw, storeHint) {
+        var cleaned = cleanProductUrl(raw, storeHint);
+        if (!cleaned) return '';
+        var store = detectStoreFromHost(new URL(cleaned).hostname) || storeHint || '';
+        return applyAffiliateParams(cleaned, store);
+    }
+
+    // Pasted / stored link se ek "product key" nikalta hai (store + product id),
+    // taaki pasted link ko dataset ke product se milaya ja sake.
+    function productKeyFromUrl(raw) {
+        var u = parseUrl(raw);
+        if (!u) return '';
+        var store = detectStoreFromHost(u.hostname);
+        var path = u.pathname;
+        var m;
+        if (store === 'amazon') {
+            m = path.match(ASIN_RE);
+            if (m) return 'amazon:' + m[1].toUpperCase();
+            return 'amazon:path:' + path.toLowerCase();
+        }
+        if (store === 'flipkart') {
+            m = path.match(/\/p\/(itm[a-z0-9]+)/i);
+            if (m) return 'flipkart:' + m[1].toLowerCase();
+            var pid = u.searchParams.get('pid');
+            if (pid) return 'flipkart:pid:' + pid.toLowerCase();
+            return 'flipkart:path:' + path.toLowerCase();
+        }
+        if (store === 'meesho') {
+            m = path.match(/\/p\/([a-z0-9]+)\/?$/i);
+            if (m) return 'meesho:' + m[1].toLowerCase();
+            return 'meesho:path:' + path.toLowerCase();
+        }
+        if (store === 'myntra') {
+            m = path.match(/\/(\d{5,})(?:\/buy)?\/?$/);
+            if (m) return 'myntra:' + m[1];
+            return 'myntra:path:' + path.toLowerCase();
+        }
+        return '';
+    }
+
+    return {
+        clean: cleanProductUrl,
+        sanitize: sanitizeOutgoingUrl,
+        detectStore: detectStoreFromHost,
+        productKey: productKeyFromUrl,
+        parse: parseUrl
+    };
+})();
+
 (function () {
 
     var STORE_ORDER = ['amazon', 'flipkart', 'meesho', 'myntra'];
-    var ALL_COMPARISON_STORES = STORE_ORDER;
+    var URLS = window.CRACK_SHOPPING_URL;
 
-    // products.json category text -> the data-category values used by the
-    // category buttons in index.html (toy / electric / vehicles / kitchen-set).
+    // products.json category text -> category buttons (toy / electric / vehicles / kitchen-set)
     var CATEGORY_MAP = {
         'headphones / audio': { primary: 'headphones', groups: ['electric'] },
         'smartwatches': { primary: 'smartwatches', groups: ['electric'] },
@@ -22,21 +199,130 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
         'toys': { primary: 'toy', groups: [] }
     };
 
+    // products.json me ab 100+ alag category-naam hain; unhe button-groups me jodne ke rules.
+    var GROUP_RULES = [
+        // Quick buttons: Mobile (sirf smartphones/mobiles, accessories nahi) aur Clothing (Men/Women/Kids Clothing)
+        { group: 'mobiles',     re: /^(mobiles?|smartphones?)$/i },
+        { group: 'clothing',    re: /clothing/i },
+        { group: 'toy',         re: /toy|game/i },
+        { group: 'vehicles',    re: /toy ?car|toycar|vehicle|die-?cast/i },
+        { group: 'kitchen-set', re: /kitchen|chopper|container|\bjars?\b|lunch|peeler|grater|bottle|flask|thermos|\bcups?\b|\bmugs?\b|mixer/i },
+        { group: 'electric',    re: /earbud|earphone|headphone|audio|charger|charging|cable|mobile|phone|smartwatch|usb|pen ?drive|pendrive|extension|spike|mouse|keyboard|laptop|power ?bank|hard disk|trimmer|shaver|dryer|straightener|tempered|screen|popsocket/i }
+    ];
+
+    // "Same category" ke liye alag-alag stores ke category-naam ek "family" me.
+    // (Amazon 'Toy Cars' = Flipkart 'toycar' = Meesho 'Die-Cast & Toy Vehicles' = Myntra 'Toy Vehicles')
+    var FAMILY_RULES = [
+        // Clothing sabse pehle: warna "clothing" label ke andar ka "cloth" use 'cleaning' family me daal deta tha
+        [/clothing|apparel|garment|kurt[aiy]|saree|t-?shirt|jeans|dress/i, 'clothing'],
+        [/toy ?car|toycar|toy vehicle|die-?cast|remote control car/i, 'toy-vehicles'],
+        [/toy|game/i, 'toys'],
+        [/smartwatch|smart watch/i, 'smartwatches'],
+        [/earbud|earphone|headphone|audio/i, 'audio'],
+        [/^(mobiles?|smartphones?)$/i, 'mobiles'],                 // Amazon 'Mobiles' = Flipkart/Meesho 'Smartphones'
+        [/(mobile|bile|phone)\s*accessor/i, 'mobile-accessories'],   // phone se bilkul alag family
+        [/keyboard|laptop|dust cover/i, 'laptop-accessories'],
+        [/extension|spike\s*guard|surge/i, 'extension-boards'],
+        [/sunscreen|face|skin|scrub|hand wash|cleans|facewash/i, 'skin-care'],
+        // Screen guard / glass / cover / case sab ek hi 'mobile-accessories' family me (type naam se alag hota hai)
+        [/screen\s*(guard|protector)|tempered|protector|(phone|mobile)\s*(cover|case)|cases?\s*&\s*covers?/i, 'mobile-accessories'],
+        [/\bstands?\b|\bholders?\b|\brings?\b|popsocket|\bgrips?\b/i, 'mobile-holders'],
+        [/charg|cable|power ?bank|usb hub|adapter/i, 'chargers-cables'],
+        [/pen ?drive|pendrive|hard disk|usb gadget/i, 'storage-drives'],
+        [/mouse/i, 'mouse'],
+        [/extension|spike|surge/i, 'extension-boards'],
+        [/trimmer|shaver|razor|grooming/i, 'grooming'],
+        [/toothbrush|oral|toothpaste/i, 'oral-care'],
+        [/hair|straighten|dryer/i, 'hair-styling'],
+        [/face|sunscreen|skin|scrub|hand wash|cleans|facewash/i, 'skin-care'],
+        [/chopper|peeler|grater|kitchen tool|kitchen appliance|mixer/i, 'kitchen-tools'],
+        [/container|jar|storage|lunch/i, 'kitchen-storage'],
+        [/bottle|flask|thermos|cups|mug|glass/i, 'bottles-flasks'],
+        [/dry fruit|nuts|badam|seeds/i, 'dry-fruits'],
+        [/chocolate|snack/i, 'snacks'],
+        [/\btea\b|coffee|health drink|bournvita/i, 'tea-coffee'],
+        [/hanger/i, 'hangers'],
+        [/clean|brush|cloth|wipe|sponge|duster/i, 'cleaning']
+    ];
+
     function toNumber(value) {
         var n = Number(value);
         return (value !== null && value !== undefined && value !== '' && isFinite(n) && n > 0) ? n : null;
     }
 
+    function slugify(text) {
+        return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+
     function resolveCategories(rawCategory, name) {
-        var key = String(rawCategory || '').trim().toLowerCase();
-        var mapped = CATEGORY_MAP[key] || { primary: key.replace(/[^a-z0-9]+/g, '-'), groups: [] };
+        var label = String(rawCategory || '').trim();
+        var key = label.toLowerCase();
+        var mapped = CATEGORY_MAP[key] || { primary: slugify(key) || 'other', groups: [] };
         var list = [mapped.primary].concat(mapped.groups);
+
+        GROUP_RULES.forEach(function (rule) {
+            if (rule.re.test(label) && list.indexOf(rule.group) === -1) list.push(rule.group);
+        });
         // "Vehicles" = toy cars / trains
-        if (mapped.primary === 'toy' && /\b(car|train)\b/i.test(name || '')) {
+        if (list.indexOf('toy') !== -1 && /\b(car|train)\b/i.test(name || '') && list.indexOf('vehicles') === -1) {
             list.push('vehicles');
         }
-        return { primary: mapped.primary, list: list };
+
+        var family = '';
+        for (var i = 0; i < FAMILY_RULES.length; i++) {
+            if (FAMILY_RULES[i][0].test(label)) { family = FAMILY_RULES[i][1]; break; }
+        }
+        return { primary: mapped.primary, list: list, family: family || ('f-' + mapped.primary) };
     }
+
+    /* ---- Clothing attributes: gender / color / size (title + category label se) ---- */
+    function detectGender(label, name) {
+        var parts = [String(label || ''), String(name || '')];
+        for (var i = 0; i < parts.length; i++) {
+            var t = parts[i].toLowerCase();
+            if (/\b(kids?|boys?|girls?|baby|infants?|toddlers?|children)\b/.test(t)) return 'kids';
+            if (/\b(women|woman|womens|ladies|lady|female)\b/.test(t)) return 'women';
+            if (/\b(men|mens|man|male|gents)\b/.test(t)) return 'men';
+            if (/\bunisex\b/.test(t)) return 'unisex';
+        }
+        return '';
+    }
+
+    var COLOR_RE = /\b(black|white|grey|gray|red|blue|navy|green|yellow|purple|pink|orange|brown|maroon|beige|silver|gold|cream|olive|teal|multicolou?r)\b/i;
+    var COLOR_ALIAS = { gray: 'grey', navy: 'blue' };
+
+    function detectColor(name) {
+        var text = String(name || '');
+        var paren = text.match(/\(([^)]*)\)/g) || [];
+        var m = null;
+        for (var i = 0; i < paren.length && !m; i++) { m = paren[i].match(COLOR_RE); }
+        if (!m) m = text.match(COLOR_RE);
+        if (!m) return '';
+        var c = m[1].toLowerCase();
+        return COLOR_ALIAS[c] || c;
+    }
+
+    var BASE_COLORS = ['black', 'white', 'grey', 'gray', 'red', 'blue', 'navy', 'green', 'yellow', 'purple', 'pink', 'orange', 'brown', 'maroon', 'beige', 'silver', 'gold', 'cream', 'olive', 'teal'];
+
+    // JSON ke "colour" field ("Jetblack", "Titanium Black", "Navy") ko ek standard rang me badalta hai
+    function normalizeColorWord(text) {
+        var t = String(text || '').toLowerCase();
+        for (var i = 0; i < BASE_COLORS.length; i++) {
+            if (t.indexOf(BASE_COLORS[i]) !== -1) return COLOR_ALIAS[BASE_COLORS[i]] || BASE_COLORS[i];
+        }
+        return '';
+    }
+
+    function detectSize(name) {
+        var text = String(name || '');
+        var m = text.match(/\bsize[:\s-]*(xxxl|xxl|xl|l|m|s|free\s*size)\b/i) || text.match(/\b(xxxl|xxl|xl)\b/i);
+        if (!m) return '';
+        var s = m[1].toLowerCase().replace(/\s+/g, '');
+        return s === 'freesize' ? 'free-size' : s;
+    }
+
+    // Smartphone category me ghus aaye cover / glass wagairah ko accessories me daalne ke liye
+    var PHONE_ACCESSORY_NAME = /\b(back\s*cover|flip\s*cover|phone\s*case|mobile\s*case|case\s*cover|tempered|screen\s*(guard|protector)|protector|pouch)\b/i;
 
     function computeDiscount(mrp, price) {
         if (mrp && price && price <= mrp) {
@@ -45,53 +331,61 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
         return null;
     }
 
-    function buildComparisonPrices(item) {
-        // DEMO comparison (same as the old code): real price for the product's
-        // own store, placeholder offsets for the other three.
-        var base = item.price || item.oldPrice;
-        var mrp = item.oldPrice || base;
-        var steps = [0, 100, 51, 151];
-        var out = {};
-        ALL_COMPARISON_STORES.forEach(function (storeName, index) {
-            var price = (storeName === item.store) ? base : (base ? base + steps[index % steps.length] : null);
-            var d = computeDiscount(mrp, price);
-            out[storeName] = { price: price, oldPrice: mrp, discount: (d === null ? 0 : d) + '% Off' };
-        });
-        return out;
-    }
-
     function normalizeProduct(raw, storeName, index) {
-        var name = raw.name || '';
+        var name = String(raw.name || '').replace(/\s+/g, ' ').trim();
         var mrp = toNumber(raw.mrp);
         var price = toNumber(raw.price);
         var cats = resolveCategories(raw.category, name);
-        var brand = name.trim().split(/[\s,]+/)[0].toLowerCase();
+        var rawLabel = raw.category;
+        if (cats.family === 'mobiles' && PHONE_ACCESSORY_NAME.test(name)) {
+            cats = resolveCategories('Mobile Accessories', name);
+            rawLabel = 'Mobile Accessories';
+        }
+        // Mixed labels ke andar chhupe alag products: naam dekh kar sahi family me daalo
+        if (cats.family === 'chargers-cables' && /pen\s*drive|pendrive|flash\s*drive/i.test(name) && !/\bhub\b|cable|charger/i.test(name)) {
+            cats = resolveCategories('Pen Drive', name);
+            rawLabel = 'Pen Drive';
+        } else if (cats.family === 'toys' && /\b(cars?|trucks?|buses|bus|trains?|jeeps?|vehicles?)\b/i.test(name)) {
+            cats = resolveCategories('Toy Vehicles', name);
+            rawLabel = 'Toy Vehicles';
+        }
+        var brand = String(raw.brand || '').trim().toLowerCase() || name.split(/[\s,]+/)[0].toLowerCase();
+        var gender = detectGender(rawLabel, name);
+        var color = (raw.colour && normalizeColorWord(raw.colour)) || detectColor(name);
+        var size = cats.family === 'clothing' ? detectSize(name) : '';
 
-        var item = {
-            // unique id (products.json repeats ids, e.g. Amazon "04" x3)
+        // Outgoing link: saaf + sahi affiliate params. Agar link kharab ho to khaali
+        // (UI tab store ke search-URL par fall back karta hai).
+        var link = URLS.sanitize(raw.link, storeName);
+
+        return {
+            // unique id (products.json me ids repeat hote hain)
             id: storeName + '-' + (index + 1),
             sourceId: raw.id,
             title: name,
             name: name,
             store: storeName,
             brand: brand,
+            gender: gender,
+            color: color,
+            size: size,
             category: cats.primary,
             categories: cats.list,
-            categoryLabel: raw.category || '',
+            family: cats.family,
+            categoryLabel: rawLabel || '',
+            subcategory: String(raw.subcategory || '').trim(),
             image: raw.image || '',
             price: price,
             oldPrice: mrp,
-            // always recomputed: JSON has bad values (431, "269OFF", null)
+            // hamesha dobara compute: JSON me kharab values hain (431, "269OFF", null)
             discount: computeDiscount(mrp, price),
-            link: raw.link || '',
-            dealUrl: raw.link || ''
+            link: link,
+            dealUrl: link
         };
-        item.prices = buildComparisonPrices(item);
-        return item;
     }
 
-    // One product per store in turn (highest discount first inside each
-    // store) so the 6-card Best Deals row is a mix, not 6 Amazon cards.
+    // Har store se baari-baari ek product (store ke andar sabse zyada discount pehle)
+    // taaki 6-card Best Deals row me mix dikhe.
     function interleaveByStore(byStore) {
         var queues = STORE_ORDER.map(function (storeName) {
             return (byStore[storeName] || []).slice().sort(function (a, b) {
@@ -101,11 +395,12 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
             });
         });
         var result = [];
+        var pointers = queues.map(function () { return 0; });
         var added = true;
         while (added) {
             added = false;
-            queues.forEach(function (q) {
-                if (q.length) { result.push(q.shift()); added = true; }
+            queues.forEach(function (q, qi) {
+                if (pointers[qi] < q.length) { result.push(q[pointers[qi]++]); added = true; }
             });
         }
         return result;
@@ -149,7 +444,9 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
         }
     }
 
-    window.CRACK_SHOPPING_PRODUCTS_READY = fetch(PRODUCTS_JSON_URL, { cache: 'no-store' })
+    // 'no-cache' = browser cache use karega par har baar server se revalidate (ETag),
+    // yaani 1.9 MB file har visit par dobara download nahi hoti, lekin naya deploy turant dikhta hai.
+    window.CRACK_SHOPPING_PRODUCTS_READY = fetch(PRODUCTS_JSON_URL, { cache: 'no-cache' })
         .then(function (response) {
             if (!response.ok) {
                 throw new Error('products.json request failed with status ' + response.status);
@@ -158,11 +455,15 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
         })
         .then(function (data) {
             var dataset = buildDataset(data);
-            // Same array reference is shared with Part 4 - mutate, don't replace.
+            // Same array reference sabhi Parts me share hota hai - mutate karo, replace nahi.
             window.CRACK_SHOPPING_PRODUCT_DATASET.push.apply(window.CRACK_SHOPPING_PRODUCT_DATASET, dataset);
             window.CRACK_SHOPPING_RAW_PRODUCTS = data;
             console.log('[Crack Shopping] products.json loaded:', dataset.length, 'products');
-            refreshUi();   // no-op if the app has not initialised yet; Part 4 will pick the data up
+            refreshUi();   // app abhi init nahi hua to no-op; Part 4 data khud utha lega
+            // Search index khali samay me pehle se bana lo, taaki pehli search turant chale.
+            setTimeout(function () {
+                try { window.CrackShoppingEngine && window.CrackShoppingEngine.warmUp(); } catch (e) {}
+            }, 200);
             return data;
         })
         .catch(function (error) {
@@ -172,6 +473,921 @@ window.CRACK_SHOPPING_PRODUCT_DATASET = [];
         });
 
 })();
+
+
+/* ============================================================
+   CRACK SHOPPING - SEARCH + MATCH ENGINE  (DOM-free)
+   ------------------------------------------------------------
+   1) Smart / Fuzzy search
+      - spelling mistakes (Damerau-Levenshtein distance)
+      - Hinglish / phonetic spellings (kar -> car, hedfon -> headphone)
+      - Hindi (Devanagari) + Hinglish intent words
+      - word-start (prefix) matching, plural/singular
+   2) Real cross-store matching (koi dummy price nahi)
+   3) Same-category suggestions
+   4) Pasted link -> dataset product lookup
+   ============================================================ */
+
+window.CrackShoppingEngine = (function () {
+
+    var CFG = window.CRACK_SHOPPING_CONFIG;
+    var URLS = window.CRACK_SHOPPING_URL;
+    var DATA = window.CRACK_SHOPPING_PRODUCT_DATASET;
+
+    /* ---------------- text helpers ---------------- */
+
+    function norm(value) {
+        return String(value === null || value === undefined ? '' : value)
+            .normalize('NFC')
+            .toLowerCase()
+            .replace(/[\u2018\u2019'`]/g, '')
+            .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    // simple plural / singular normaliser (cables->cable, watches->watch, batteries->battery)
+    function stem(word) {
+        if (!/^[a-z0-9]+$/.test(word)) return word;
+        if (word.length > 4 && /ies$/.test(word)) return word.slice(0, -3) + 'y';
+        if (word.length > 4 && /(ches|shes|xes|sses)$/.test(word)) return word.slice(0, -2);
+        if (word.length > 3 && /s$/.test(word) && !/ss$/.test(word)) return word.slice(0, -1);
+        return word;
+    }
+
+    function tokenize(text) {
+        var out = [];
+        norm(text).split(' ').forEach(function (w) {
+            if (w.length > 1) out.push(stem(w));
+        });
+        return out;
+    }
+
+    // Damerau-Levenshtein (adjacent swap = 1 edit) with early exit.
+    function editDistance(a, b, max) {
+        var la = a.length, lb = b.length;
+        if (Math.abs(la - lb) > max) return max + 1;
+        var prev2 = null;
+        var prev = new Array(lb + 1);
+        var cur = new Array(lb + 1);
+        var i, j;
+        for (j = 0; j <= lb; j++) prev[j] = j;
+        for (i = 1; i <= la; i++) {
+            cur[0] = i;
+            var rowMin = cur[0];
+            for (j = 1; j <= lb; j++) {
+                var cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+                var v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+                if (prev2 && i > 1 && j > 1 &&
+                    a.charCodeAt(i - 1) === b.charCodeAt(j - 2) &&
+                    a.charCodeAt(i - 2) === b.charCodeAt(j - 1)) {
+                    v = Math.min(v, prev2[j - 2] + 1);
+                }
+                cur[j] = v;
+                if (v < rowMin) rowMin = v;
+            }
+            if (rowMin > max) return max + 1;
+            prev2 = prev;
+            prev = cur;
+            cur = new Array(lb + 1);
+        }
+        return prev[lb];
+    }
+
+    // Hinglish / phonetic "skeleton": car/kar/kaar -> "kr", headphone/hedfon -> "h|dfn"
+    function skeletonKey(word) {
+        if (!/^[a-z]+$/.test(word)) return '';
+        var s = word
+            .replace(/ph/g, 'f').replace(/ck/g, 'k').replace(/q/g, 'k').replace(/x/g, 'ks')
+            .replace(/w/g, 'v').replace(/z/g, 'j')
+            .replace(/ch/g, 'C').replace(/sh/g, 'S')
+            .replace(/c(?=[eiy])/g, 's').replace(/c/g, 'k');
+        var consonants = s.replace(/[aeiouyh]/g, '').replace(/(.)\1+/g, '$1');
+        if (consonants.length < 3) return '';
+        return s.charAt(0) + '|' + consonants;
+    }
+
+    function maxEdits(len) {
+        if (len <= 3) return 0;
+        if (len <= 6) return 1;
+        return 2;
+    }
+
+    /* ---------------- Hindi + Hinglish intent words ----------------
+       t = user ke shabd (English / Hinglish / Hindi)
+       x = product titles me dhundhne wale English shabd
+       c = (optional) category-button groups
+       Naya shabd sikhana ho to bas yahan ek entry jod dein.
+       ------------------------------------------------------------ */
+    var INTENTS = [
+        { t: ['car', 'cars', 'kar', 'kaar', 'gaadi', 'gadi', 'gadiya', 'gaadiyan', 'कार', 'गाड़ी', 'गाड़ियां', 'गाडी', 'गाड़ियाँ'], x: ['car', 'vehicle'], c: ['vehicles'] },
+        { t: ['toy', 'toys', 'khilona', 'khilone', 'khilauna', 'khilaune', 'khelna', 'खिलौना', 'खिलौने', 'टॉय'], x: ['toy', 'toys'], c: ['toy'] },
+        { t: ['kitchen', 'rasoi', 'kichan', 'किचन', 'रसोई'], x: ['kitchen'], c: ['kitchen-set'] },
+        { t: ['headphone', 'headphones', 'earphone', 'earphones', 'earbud', 'earbuds', 'hedfon', 'headfon', 'hedphone', 'iyarphone', 'इयरफोन', 'ईयरफोन', 'हेडफोन', 'ईयरबड्स', 'इयरबड्स'], x: ['headphone', 'earphone', 'earbud'], c: ['headphones'] },
+        { t: ['electric', 'electronics', 'electronic', 'इलेक्ट्रॉनिक', 'इलेक्ट्रिक'], x: ['electric', 'electronic'], c: ['electric'] },
+        { t: ['watch', 'watches', 'smartwatch', 'ghadi', 'ghari', 'vaach', 'घड़ी', 'घडी', 'वॉच'], x: ['watch', 'smartwatch'], c: ['smartwatches'] },
+        { t: ['clothes', 'clothing', 'cloth', 'kapde', 'kapda', 'kapde', 'कपड़े', 'कपड़ा', 'कपडे'], x: ['clothes', 'clothing', 'cloth'], c: ['clothing'] },
+        { t: ['shoes', 'shoe', 'footwear', 'joota', 'joote', 'jute', 'juta', 'जूते', 'जूता'], x: ['shoe', 'footwear'], c: [] },
+        { t: ['mobile', 'mobiles', 'phone', 'phones', 'smartphone', 'fon', 'foon', 'mobail', 'mobil', 'मोबाइल', 'फोन', 'फ़ोन'], x: ['mobile', 'phone', 'smartphone'], c: ['mobiles'] },
+        { t: ['charger', 'chargers', 'charging', 'chargar', 'cable', 'cables', 'kebal', 'चार्जर', 'केबल'], x: ['charger', 'cable'], c: [] },
+        { t: ['bottle', 'bottles', 'botal', 'bottal', 'botl', 'flask', 'बोतल'], x: ['bottle', 'flask'], c: [] },
+        { t: ['bag', 'bags', 'backpack', 'baig', 'bega', 'बैग'], x: ['bag', 'backpack'], c: [] },
+        { t: ['trimmer', 'trimar', 'ट्रिमर'], x: ['trimmer'], c: [] },
+        { t: ['chopper', 'choper', 'sabji', 'sabzi', 'सब्जी', 'सब्ज़ी', 'चॉपर'], x: ['chopper', 'vegetable'], c: [] },
+        { t: ['mouse', 'maus', 'माउस'], x: ['mouse'], c: [] },
+        { t: ['powerbank', 'पावरबैंक'], x: ['power', 'bank'], c: [] },
+        { t: ['pendrive', 'pendriv', 'पेनड्राइव'], x: ['pen', 'drive', 'pendrive'], c: [] },
+        { t: ['dryfruit', 'dryfruits', 'badam', 'kaju', 'meva', 'मेवा', 'बादाम', 'काजू'], x: ['dry', 'fruit', 'almond', 'cashew'], c: [] },
+        { t: ['chocolate', 'chocolates', 'chocolet', 'chocklet', 'chakleti', 'चॉकलेट'], x: ['chocolate'], c: [] },
+        { t: ['sunscreen', 'facewash', 'cream', 'क्रीम', 'फेसवाश'], x: ['sunscreen', 'face', 'wash', 'cream'], c: [] }
+    ];
+
+    // alias -> intent  (Latin aliases ko stem karke, Hindi ko NFC karke)
+    var INTENT_MAP = new Map();
+    var INTENT_LATIN_KEYS = [];
+    INTENTS.forEach(function (intent) {
+        intent.t.forEach(function (term) {
+            var key = norm(term);
+            var keyStem = stem(key);
+            if (!INTENT_MAP.has(keyStem)) INTENT_MAP.set(keyStem, intent);
+            if (!INTENT_MAP.has(key)) INTENT_MAP.set(key, intent);
+            if (/^[a-z]+$/.test(keyStem) && keyStem.length >= 5) INTENT_LATIN_KEYS.push([keyStem, intent]);
+        });
+    });
+
+    var STOP_QUERY = new Set(['for', 'with', 'and', 'the', 'of', 'in', 'to', 'a', 'an', 'by', 'me', 'my',
+        'ke', 'ki', 'ka', 'ko', 'se', 'hai', 'wala', 'wali', 'wale', 'best', 'buy', 'online', 'price',
+        'cheap', 'sasta', 'sabse', 'chahiye', 'dikhao']);
+
+    /* ---------------- search index ---------------- */
+
+    var index = { count: -1, inv: new Map(), vocab: new Map(), skel: new Map(), catIdx: new Map() };
+    var queryCache = new Map();
+
+    function pushTo(map, key, value) {
+        var list = map.get(key);
+        if (!list) { list = []; map.set(key, list); }
+        list.push(value);
+    }
+
+    function buildIndex() {
+        if (index.count === DATA.length) return index;
+
+        index = { count: DATA.length, inv: new Map(), vocab: new Map(), skel: new Map(), catIdx: new Map() };
+        queryCache = new Map();
+
+        DATA.forEach(function (product, i) {
+            var titleSet = new Set();
+            var catSet = new Set();
+
+            tokenize(product.title).slice(0, 40).forEach(function (w) { titleSet.add(w); });
+            tokenize(product.categoryLabel).forEach(function (w) { titleSet.add(w); catSet.add(w); });
+
+            product._ix = { t: titleSet, c: catSet, n: norm(product.title), cn: tokenize(product.categoryLabel).join(' ') };
+
+            titleSet.forEach(function (w) {
+                pushTo(index.inv, w, i);
+                index.vocab.set(w, (index.vocab.get(w) || 0) + 1);
+            });
+            (product.categories || []).forEach(function (slug) { pushTo(index.catIdx, slug, i); });
+        });
+
+        index.vocab.forEach(function (df, word) {
+            var key = skeletonKey(word);
+            if (key) pushTo(index.skel, key, word);
+        });
+        return index;
+    }
+
+    function findIntent(rawToken, stemmed) {
+        var hit = INTENT_MAP.get(rawToken) || INTENT_MAP.get(stemmed);
+        if (hit) return { intent: hit, exact: true };
+        if (/^[a-z]+$/.test(stemmed) && stemmed.length >= 5) {
+            var max = maxEdits(stemmed.length);
+            for (var i = 0; i < INTENT_LATIN_KEYS.length; i++) {
+                var key = INTENT_LATIN_KEYS[i][0];
+                if (Math.abs(key.length - stemmed.length) <= max && editDistance(stemmed, key, max) <= max) {
+                    return { intent: INTENT_LATIN_KEYS[i][1], exact: false };
+                }
+            }
+        }
+        return null;
+    }
+
+    // Ek query-shabd ke saare "milte-julte" vocabulary shabd + weight.
+    function buildAlternatives(rawToken) {
+        var q = stem(rawToken);
+        var words = new Map();
+        var cats = [];
+        var display = '';
+        var displayWeight = 0;
+
+        function put(word, weight, canDisplay) {
+            if (weight > (words.get(word) || 0)) words.set(word, weight);
+            if (canDisplay && weight < 1 && weight > displayWeight) { displayWeight = weight; display = word; }
+        }
+
+        var df = index.vocab.get(q) || 0;
+        if (df) words.set(q, 1);
+
+        // Barabari par zyada common shabd jeete (wach -> watch, wash nahi)
+        function freqBonus(word) {
+            return Math.min(0.09, Math.log10((index.vocab.get(word) || 0) + 1) / 40);
+        }
+
+        var isLatin = /^[a-z]+$/.test(q);
+        var hasLetter = /\D/.test(q);
+
+        // word-start match: "head" -> headphone, "samsu" -> samsung
+        if (q.length >= 3 && hasLetter) {
+            index.vocab.forEach(function (c, word) {
+                if (word.length > q.length && word.indexOf(q) === 0) put(word, 0.8, false);
+            });
+        }
+
+        // spelling mistakes + Hinglish phonetics (sirf tab jab shabd khud common nahi hai)
+        if (isLatin && df < 5) {
+            var allowed = maxEdits(q.length);
+            if (allowed) {
+                index.vocab.forEach(function (c, word) {
+                    if (word === q || Math.abs(word.length - q.length) > allowed || !/^[a-z]+$/.test(word)) return;
+                    var d = editDistance(q, word, allowed);
+                    if (d <= allowed) put(word, (d === 1 ? 0.8 : 0.62) + freqBonus(word), true);
+                });
+            }
+            var sk = skeletonKey(q);
+            if (sk) {
+                var same = index.skel.get(sk);
+                if (same) same.forEach(function (word) { if (word !== q) put(word, 0.68 + freqBonus(word), true); });
+            }
+        }
+
+        // Hindi / Hinglish intent words ("kar", "gaadi", "कार", "खिलौना", ...)
+        var found = findIntent(norm(rawToken), q);
+        if (found) {
+            found.intent.x.forEach(function (term) {
+                var st = stem(norm(term));
+                if (index.vocab.has(st)) put(st, found.exact ? 0.85 : 0.7, true);
+            });
+            cats = found.intent.c || [];
+        }
+
+        // Shabd khud product titles me milta hai to "correction" dikhane ki zarurat nahi.
+        if (df > 0) display = '';
+
+        return { words: words, cats: cats, display: display };
+    }
+
+    function categoryTokenHit(product, alts) {
+        var catTokens = product._ix.c;
+        var hit = false;
+        catTokens.forEach(function (w) {
+            if (hit) return;
+            for (var i = 0; i < alts.length; i++) {
+                if ((alts[i].words.get(w) || 0) >= 0.7) { hit = true; return; }
+            }
+        });
+        return hit;
+    }
+
+    function search(query) {
+        buildIndex();
+        var key = norm(query);
+        var empty = { results: [], corrected: '', query: key };
+        if (!key) return empty;
+
+        var cacheKey = key + '|' + index.count;
+        if (queryCache.has(cacheKey)) return queryCache.get(cacheKey);
+
+        var tokens = key.split(' ').filter(Boolean);
+        var meaningful = tokens.filter(function (t) { return !STOP_QUERY.has(t); });
+        if (meaningful.length) tokens = meaningful;
+        tokens = tokens.slice(0, 8);
+
+        var n = tokens.length;
+        var alts = tokens.map(buildAlternatives);
+
+        // Jude hue shabd: "smart watch" / "smart wach" -> title ka "smartwatch"
+        for (var ti = 0; ti + 1 < n; ti++) {
+            var joined = stem(tokens[ti] + tokens[ti + 1]);
+            var joinedHit = '';
+            if (index.vocab.has(joined)) {
+                joinedHit = joined;
+            } else if (/^[a-z]+$/.test(joined) && joined.length >= 7) {
+                var bestDf = 0;
+                index.vocab.forEach(function (c, word) {
+                    if (Math.abs(word.length - joined.length) > 1 || !/^[a-z]+$/.test(word)) return;
+                    if (c > bestDf && editDistance(joined, word, 1) <= 1) { bestDf = c; joinedHit = word; }
+                });
+            }
+            if (joinedHit) {
+                alts[ti].words.set(joinedHit, Math.max(alts[ti].words.get(joinedHit) || 0, 0.9));
+                alts[ti + 1].words.set(joinedHit, Math.max(alts[ti + 1].words.get(joinedHit) || 0, 0.9));
+                if (joinedHit !== joined) {
+                    alts[ti].display = joinedHit;
+                    alts[ti + 1].display = '\u0000';   // is shabd ko correction-text me chhod do
+                }
+            }
+        }
+
+        var effectiveKey = tokens.map(function (t, i) { return alts[i].display || stem(t); }).join(' ');
+        var scores = new Map();
+
+        alts.forEach(function (alt, qi) {
+            alt.words.forEach(function (weight, word) {
+                var list = index.inv.get(word);
+                if (!list) return;
+                for (var k = 0; k < list.length; k++) {
+                    var id = list[k];
+                    var arr = scores.get(id);
+                    if (!arr) { arr = new Float32Array(n); scores.set(id, arr); }
+                    if (weight > arr[qi]) arr[qi] = weight;
+                }
+            });
+            alt.cats.forEach(function (slug) {
+                var list = index.catIdx.get(slug);
+                if (!list) return;
+                for (var k = 0; k < list.length; k++) {
+                    var id = list[k];
+                    var arr = scores.get(id);
+                    if (!arr) { arr = new Float32Array(n); scores.set(id, arr); }
+                    if (0.45 > arr[qi]) arr[qi] = 0.45;
+                }
+            });
+        });
+
+        var full = [];
+        var partial = [];
+        scores.forEach(function (arr, id) {
+            var product = DATA[id];
+            var sum = 0, matched = 0;
+            for (var i = 0; i < n; i++) {
+                if (arr[i] > 0) { matched++; sum += arr[i]; }
+            }
+            var score = sum / n;
+            if (matched === n) {
+                if (n > 1 && product._ix.n.indexOf(key) !== -1) score += 0.25;   // poora phrase title me
+                if (categoryTokenHit(product, alts)) score += 0.1;                // category ke naam se match
+                if (product._ix.cn === effectiveKey) score += 0.15;                // poori category ka naam hi query hai
+                full.push({ p: product, s: score });
+            } else {
+                partial.push({ p: product, s: score * 0.6 });
+            }
+        });
+
+        // Google jaisa: jahan saare shabd milte hon unhe hi dikhao; warna sabse kareebi.
+        var chosen = full.length ? full : partial;
+        chosen.sort(function (a, b) {
+            if (b.s !== a.s) return b.s - a.s;
+            return (b.p.popularity || 0) - (a.p.popularity || 0);
+        });
+
+        var corrected = '';
+        if (alts.some(function (a) { return a.display; })) {
+            corrected = tokens.map(function (t, i) { return alts[i].display || t; }).filter(function (w) { return w !== '\u0000'; }).join(' ');
+        }
+
+        var result = {
+            results: chosen.map(function (entry) { return entry.p; }),
+            corrected: corrected,
+            query: key
+        };
+        if (queryCache.size > 30) queryCache.clear();
+        queryCache.set(cacheKey, result);
+        return result;
+    }
+
+    /* ---------------- cross-store matching ---------------- */
+
+    var STOP_MATCH = new Set(['with', 'and', 'for', 'the', 'of', 'in', 'to', 'by', 'pack', 'set', 'combo', 'new',
+        'latest', 'edition', 'upto', 'up', 'free', 'size', 'color', 'colour', 'black', 'white', 'blue', 'red',
+        'green', 'grey', 'gray', 'pink', 'yellow', 'purple', 'orange', 'brown', 'silver', 'gold', 'multicolor',
+        'men', 'women', 'mens', 'womens', 'kids', 'kid']);
+
+    var matchIndex = null;
+
+    function matchTokens(product) {
+        if (product._mt) return product._mt;
+        var words = norm(String(product.title || '').replace(/\(.*?\)/g, ' ')).split(' ');
+        var out = [];
+        words.forEach(function (w) {
+            if (w.length > 1 && !STOP_MATCH.has(w)) out.push(stem(w));
+        });
+        product._mt = out.slice(0, 14);
+        product._ms = new Set(product._mt);
+        return product._mt;
+    }
+
+    function buildMatchIndex() {
+        if (matchIndex && matchIndex.count === DATA.length) return matchIndex;
+        matchIndex = { count: DATA.length, inv: new Map(), df: new Map() };
+        DATA.forEach(function (product, i) {
+            matchTokens(product);
+            product._ms.forEach(function (w) {
+                pushTo(matchIndex.inv, w, i);
+                matchIndex.df.set(w, (matchIndex.df.get(w) || 0) + 1);
+            });
+            product._matches = null;
+        });
+        return matchIndex;
+    }
+
+    function idf(word) {
+        return Math.log(1 + DATA.length / ((matchIndex.df.get(word)) || 1));
+    }
+
+    // IDF-weighted Dice similarity (0..1)
+    function similarity(a, b) {
+        buildMatchIndex();
+        matchTokens(a); matchTokens(b);
+        var inter = 0, wa = 0, wb = 0;
+        a._ms.forEach(function (w) { var x = idf(w); wa += x; if (b._ms.has(w)) inter += x; });
+        b._ms.forEach(function (w) { wb += idf(w); });
+        return (wa + wb) ? (2 * inter) / (wa + wb) : 0;
+    }
+
+    function digitTokens(product) {
+        return product._mt.filter(function (w) { return /\d/.test(w); });
+    }
+
+    // ---- Rule 1: Strict Category + Subcategory ----
+    // Alag-alag stores ke subcategory-naam ek hi key me (Kurtis = Kurtas, Smartphones = Mobiles ...)
+    var SUBCAT_ALIAS = {
+        'tshirts': 'tshirt', 'tshirt': 'tshirt', 'tees': 'tshirt',
+        'kurtis': 'kurta', 'kurtas': 'kurta', 'kurti': 'kurta', 'kurta': 'kurta',
+        'kurta sets': 'kurta-set', 'kurta set': 'kurta-set',
+        'smartphones': 'mobiles', 'mobiles': 'mobiles',
+        'tights leggings': 'leggings', 'jeggings': 'leggings',
+        'sarees': 'saree', 'saree': 'saree', 'shirts': 'shirt', 'shirt': 'shirt',
+        'jeans': 'jeans', 'trousers': 'trousers', 'track pants': 'track-pants',
+        'dresses': 'dress', 'dress': 'dress', 'tops': 'top', 'top': 'top'
+    };
+
+    // Amazon ke data me subcategory field nahi hai -> clothing ka subcategory naam se nikalte hain.
+    var SUBCAT_FROM_NAME = [
+        [/kurta\s*set|kurti\s*set|kurta\s+with\s+(palazzo|pant|dupatta)/i, 'kurta-set'],
+        [/\bkurta\b|\bkurti\b|\bkurtis\b|\bkurtas\b/i, 'kurta'],
+        [/saree|sari\b/i, 'saree'],
+        [/t-?\s?shirt|\btee\b|\bpolo\b/i, 'tshirt'],
+        [/track\s*pant|trackpant|jogger/i, 'track-pants'],
+        [/\bjeans?\b|denim/i, 'jeans'],
+        [/jegging|legging|tights/i, 'leggings'],
+        [/trouser|chino|cargo\s*pant|formal\s*pant/i, 'trousers'],
+        [/\bshirt\b|\bshirts\b/i, 'shirt'],
+        [/\bdress\b|\bgown\b|\bmaxi\b/i, 'dress'],
+        [/\btop\b|\btops\b|\bcrop\b/i, 'top']
+    ];
+
+    function subKey(product) {
+        if (product._sub !== undefined) return product._sub;
+        var raw = norm(product.subcategory || '');
+        var key = '';
+        if (raw) {
+            key = SUBCAT_ALIAS[raw] || stem(raw);
+        } else if (/clothing/i.test(product.categoryLabel || '')) {
+            for (var i = 0; i < SUBCAT_FROM_NAME.length; i++) {
+                if (SUBCAT_FROM_NAME[i][0].test(product.title || '')) { key = SUBCAT_FROM_NAME[i][1]; break; }
+            }
+            if (!key) key = '?';          // clothing ka subcategory pata nahi -> match nahi karenge
+        }
+        // Phone ka subcategory hamesha 'mobiles' (Amazon me field hi nahi hota);
+        // accessories ka type naam se (cover / screen-guard / charger ...), unknown => match nahi.
+        if (product.family === 'mobiles') key = 'mobiles';
+        else if (product.family === 'mobile-accessories') key = accessoryType(product) || '?';
+        product._sub = key;
+        return key;
+    }
+
+    /* ============ MASTER RULES helpers ============ */
+
+    // ---- Mobile Accessories: type + phone-model compatibility ----
+    var ACCESSORY_TYPES = [
+        [/earphone|earbud|headphone|neckband|headset/i, 'audio'],
+        [/tempered|screen\s*(guard|protector)|glass\s*guard|protector|privacy\s*glass|\bglass\b/i, 'screen-guard'],
+        [/back\s*cover|flip\s*cover|\bcover\b|\bcase\b|pouch|bumper/i, 'cover'],
+        [/power\s*bank/i, 'powerbank'],
+        [/charger|adapter|adaptor/i, 'charger'],
+        [/cable|\bcord\b/i, 'cable'],
+        [/\bring\b|popsocket|\bstand\b|\bholder\b|\bgrip\b/i, 'holder'],
+        [/pen\s*drive|pendrive|memory\s*card|\botg\b/i, 'storage']
+    ];
+
+    function accessoryType(product) {
+        var t = String(product.title || '');
+        for (var i = 0; i < ACCESSORY_TYPES.length; i++) {
+            if (ACCESSORY_TYPES[i][0].test(t)) return ACCESSORY_TYPES[i][1];
+        }
+        return '';
+    }
+
+    var DEVICE_BRAND_MAP = {
+        iphone: 'apple', apple: 'apple', samsung: 'samsung', galaxy: 'samsung', redmi: 'xiaomi', xiaomi: 'xiaomi',
+        mi: 'xiaomi', poco: 'poco', realme: 'realme', oppo: 'oppo', vivo: 'vivo', iqoo: 'iqoo', oneplus: 'oneplus',
+        nothing: 'nothing', motorola: 'motorola', moto: 'motorola', infinix: 'infinix', tecno: 'tecno', itel: 'itel',
+        lava: 'lava', pixel: 'google', google: 'google', honor: 'honor', nokia: 'nokia'
+    };
+
+    function deviceKey(product) {
+        var seen = {}, list = [];
+        norm(product.title).split(' ').forEach(function (w) {
+            var b = DEVICE_BRAND_MAP.hasOwnProperty(w) ? DEVICE_BRAND_MAP[w] : '';
+            if (b && !seen[b]) { seen[b] = true; list.push(b); }
+        });
+        return list.sort().join(',');
+    }
+
+    // cover / glass sirf apne hi phone-model ke saath (aur sirf apne type ke saath)
+    function accessoryOk(a, b) {
+        var type = subKey(a);
+        if (type !== subKey(b)) return false;
+        if (type === 'cover' || type === 'screen-guard') {
+            return deviceKey(a) === deviceKey(b);
+        }
+        return true;
+    }
+
+    // ---- Mobiles: RAM + Storage sakht ----
+    function memorySpec(product) {
+        if (product._mem) return product._mem;
+        var t = String(product.title || ''), vals = [], re = /(\d+(?:\.\d+)?)\s*(gb|tb)\b/gi, m;
+        while ((m = re.exec(t))) vals.push(parseFloat(m[1]) * (m[2].toLowerCase() === 'tb' ? 1024 : 1));
+        var ramM = t.match(/(\d+)\s*gb\s*ram/i) || t.match(/ram\s*[:\-]?\s*(\d+)\s*gb/i);
+        var ram = ramM ? parseInt(ramM[1], 10) : 0;
+        var storage = vals.length ? Math.max.apply(null, vals) : 0;
+        if (!ram && vals.length > 1) ram = Math.min.apply(null, vals);
+        if (ramM && vals.length <= 1) storage = 0;
+        product._mem = { ram: ram, storage: storage };
+        return product._mem;
+    }
+
+    function sameMobileMemory(a, b) {
+        var x = memorySpec(a), y = memorySpec(b);
+        if (!x.storage || !y.storage || x.storage !== y.storage) return false;   // storage dono me hona + barabar hona zaruri
+        if (x.ram && y.ram && x.ram !== y.ram) return false;                    // RAM dono me ho to barabar
+        return true;
+    }
+
+    // ---- ml / litre / gram / kg / pack-of ----
+    var QUANTITY_FAMILIES = {
+        'bottles-flasks': 1, 'kitchen-storage': 1, 'dry-fruits': 1, 'snacks': 1,
+        'tea-coffee': 1, 'skin-care': 1, 'oral-care': 1
+    };
+
+    function quantitySpec(product) {
+        if (product._qty) return product._qty;
+        var t = String(product.title || ''), vol = 0, wt = 0, pack = 1, m;
+        if (product.family !== 'clothing') {
+            var re = /(\d+(?:\.\d+)?)\s*(ml|ltrs?|litres?|liters?|l|kgs?|gms?|grams?|g)\b/gi;
+            while ((m = re.exec(t))) {
+                var n = parseFloat(m[1]), u = m[2].toLowerCase();
+                if (u === 'ml') vol = Math.max(vol, n);
+                else if (/^(l|ltr|ltrs|litre|litres|liter|liters)$/.test(u)) vol = Math.max(vol, n * 1000);
+                else if (/^kgs?$/.test(u)) wt = Math.max(wt, n * 1000);
+                else if (n > 5) wt = Math.max(wt, n);          // "5G" network ko gram na samjho
+            }
+        }
+        m = t.match(/(?:pack|set|combo)\s*of\s*(\d+)/i) || t.match(/\b(\d+)\s*(?:pcs|pc|pieces|piece|packs?|units)\b/i);
+        if (m) pack = parseInt(m[1], 10) || 1;
+        product._qty = { vol: vol, wt: wt, pack: pack };
+        return product._qty;
+    }
+
+    function sameAmount(p, q, strict) {
+        if (!p && !q) return true;
+        if (!p || !q) return !strict;                       // packed saaman me ek taraf size na ho to match nahi
+        return Math.abs(p - q) / Math.max(p, q) <= 0.005;
+    }
+
+    function quantityOk(a, b) {
+        var x = quantitySpec(a), y = quantitySpec(b);
+        var strict = !!QUANTITY_FAMILIES[a.family];
+        if (!sameAmount(x.vol, y.vol, strict)) return false;
+        if (!sameAmount(x.wt, y.wt, strict)) return false;
+        return x.pack === y.pack;
+    }
+
+    // ---- Clothing: gender / color / size / brand ----
+    function brandWord(product) {
+        var skip = { men: 1, mens: 1, women: 1, womens: 1, kids: 1, kid: 1, boys: 1, boy: 1, girls: 1, girl: 1,
+                     pack: 1, set: 1, new: 1, the: 1, for: 1 };
+        var words = norm(product.title).split(' ');
+        for (var i = 0; i < words.length && i < 3; i++) {
+            if (words[i].length > 1 && !skip[words[i]] && !/^\d/.test(words[i])) return words[i];
+        }
+        return '';
+    }
+
+    function titleHasWord(product, word) {
+        return !!word && (' ' + norm(product.title) + ' ').indexOf(' ' + word + ' ') !== -1;
+    }
+
+    function clothingOk(a, b) {
+        if (a.color && b.color && a.color !== b.color) return false;
+        if (a.size && b.size && a.size !== b.size) return false;
+        var ba = brandWord(a), bb = brandWord(b);
+        if (ba && bb && ba !== bb && !titleHasWord(b, ba) && !titleHasWord(a, bb)) return false;
+        return true;
+    }
+
+    // Men / Women / Kids kabhi mix nahi. Clothing me gender dono taraf pata hona zaruri;
+    // baaki categories me sirf tab rokte hain jab dono ka gender pata ho aur alag ho.
+    // lenient = true (sirf suggestions) => gender pata na ho to rok-tok nahi.
+    function genderCompatible(a, b, lenient) {
+        var ga = a.gender || '', gb = b.gender || '';
+        if (a.family === 'clothing' || b.family === 'clothing') {
+            if (lenient && (!ga || !gb)) return true;
+            return !!ga && ga === gb;
+        }
+        if (ga && gb && ga !== 'unisex' && gb !== 'unisex') return ga === gb;
+        return true;
+    }
+
+    function sameSpecs(a, b) {
+        if (a.family === 'mobiles' && !sameMobileMemory(a, b)) return false;
+        if (!quantityOk(a, b)) return false;
+        if (a.family === 'clothing' && !clothingOk(a, b)) return false;
+        if (a.family === 'mobile-accessories' && !accessoryOk(a, b)) return false;
+        return true;
+    }
+
+    // Debug: console me `CrackShoppingEngine.auditCategories()` chalayein -
+    // har (store | category | subcategory) kis family me gaya, aur kaunsa label unmapped ('f-...') raha.
+    function auditCategories() {
+        var table = {};
+        DATA.forEach(function (p) {
+            var key = p.store + ' | ' + p.categoryLabel + ' | ' + p.subcategory;
+            if (!table[key]) table[key] = { store: p.store, category: p.categoryLabel, subcategory: p.subcategory, family: p.family, count: 0 };
+            table[key].count++;
+        });
+        var rows = Object.keys(table).map(function (k) { return table[k]; })
+            .sort(function (a, b) { return a.family < b.family ? -1 : a.family > b.family ? 1 : b.count - a.count; });
+        if (console.table) console.table(rows);
+        return rows;
+    }
+
+    // Ek family ke andar sub-type (chopper != peeler, dryer != straightener, car-cleaning != cloth ...).
+    // Last rule /[\s\S]/ = default type: tab "unknown" bhi alag type maana jaata hai.
+    var ANY = /[\s\S]/;
+    var TYPE_RULES = {
+        'kitchen-tools':      [[/peeler|grater/i, 'peeler-grater'], [/mixer|grinder|blender/i, 'mixer'], [/chopper|cutter|slicer/i, 'chopper'], [ANY, 'other']],
+        'hair-styling':       [[/straighten|flat\s*iron|crimper|curler/i, 'straightener'], [/dryer|drier/i, 'dryer'], [/\bbrush|\bcomb\b/i, 'brush'], [ANY, 'other']],
+        'grooming':           [[/razor/i, 'razor'], [/shaver/i, 'shaver'], [/trimmer/i, 'trimmer'], [ANY, 'other']],
+        'laptop-accessories': [[/\bbag\b|backpack|sleeve/i, 'bag'], [/cooling\s*pad|cooler/i, 'cooling-pad'], [/keyboard\s*(skin|cover|protector|guard)|dust\s*cover/i, 'keyboard-skin'], [/stand|table|desk/i, 'stand'], [/clean/i, 'cleaner'], [ANY, 'other']],
+        'chargers-cables':    [[/power\s*bank/i, 'powerbank'], [/\bhubs?\b/i, 'hub'], [/charger|adapter|adaptor/i, 'charger'], [/cable|\bcord\b/i, 'cable'], [ANY, 'other']],
+        'oral-care':          [[/toothpaste/i, 'toothpaste'], [/electric|sonic|rechargeable/i, 'electric-brush'], [/brush/i, 'toothbrush'], [ANY, 'other']],
+        'bottles-flasks':     [[/\b(mugs?|cups?|tumblers?)\b/i, 'cup'], [ANY, 'bottle']],
+        'skin-care':          [[/hand\s*wash/i, 'handwash'], [/face\s*wash|facewash|cleanser/i, 'facewash'], [/sunscreen|spf/i, 'sunscreen'], [/scrub|sponge/i, 'scrub'], [ANY, 'other']],
+        'cleaning':           [[/\bcar\b|vehicle|\bbike\b/i, 'car'], [ANY, 'general']],
+        'audio':              [[/wired|3\.5\s*mm|\baux\b/i, 'wired'], [ANY, 'wireless']],
+        'f-anime-merchandise': [[/t-?\s?shirt|\btee\b/i, 'tshirt'], [/figure|figurine|statue|showpiece|funko|bobble/i, 'figure'], [/backpack|\bbag\b/i, 'bag'], [/notebook|diary|journal/i, 'notebook'], [/key\s?chain|keyring/i, 'keychain'], [/poster|sticker/i, 'poster'], [ANY, 'other']]
+    };
+
+    function typeKey(product) {
+        if (product._type !== undefined) return product._type;
+        var rules = TYPE_RULES[product.family], key = '';
+        if (rules) {
+            var t = String(product.title || '');
+            for (var i = 0; i < rules.length; i++) {
+                if (rules[i][0].test(t)) { key = rules[i][1]; break; }
+            }
+        }
+        product._type = key;
+        return key;
+    }
+
+    function sameCategory(a, b) {
+        if (!sameCategoryBase(a, b)) return false;
+        return genderCompatible(a, b, false);
+    }
+
+    function sameCategoryBase(a, b) {
+        if (!a.family || a.family !== b.family) return false;                 // category family bilkul same
+        if (a.family.indexOf('f-') === 0 && a.category !== b.category) return false;
+        var sa = subKey(a), sb = subKey(b);
+        if (sa === '?' || sb === '?') return false;
+        if (sa && sb && sa !== sb) return false;   // jis store me subcategory field nahi (Amazon), wahan family + type se jaanchte hain
+        return typeKey(a) === typeKey(b);                                                      // subcategory bilkul same
+    }
+
+    // ---- Rule 2: 80% Name Fuzzy Matching ----
+    // Naam ke "core" shabd (| , ( se pehle ka hissa, colour/size/marketing hata kar) tulna karte hain.
+    var NAME_NOISE = new Set(['with', 'and', 'for', 'the', 'of', 'in', 'to', 'by', 'pack', 'set', 'combo', 'new',
+        'latest', 'edition', 'free', 'size', 'color', 'colour', 'gb', 'ram', 'storage', 'rom']);
+
+    function coreWords(product) {
+        if (product._cw) return product._cw;
+        var title = String(product.title || '').split(/[|\u2022]/)[0].replace(/\(.*?\)/g, ' ');
+        var words = [];
+        norm(title).split(' ').forEach(function (w) {
+            if (w.length > 1 && !NAME_NOISE.has(w) && !STOP_MATCH.has(w)) words.push(stem(w));
+        });
+        product._cw = words.slice(0, 10);
+        return product._cw;
+    }
+
+    // do shabd "same" maane jaate hain agar barabar hon ya 1 spelling-edit (lamba shabd) ka fark ho
+    function sameWord(x, y) {
+        if (x === y) return true;
+        if (x.length < 5 || y.length < 5 || /\d/.test(x + y)) return false;
+        return editDistance(x, y, 1) <= 1;
+    }
+
+    function nameMatchRatio(a, b) {
+        var wa = coreWords(a), wb = coreWords(b);
+        if (!wa.length || !wb.length) return 0;
+        var small = wa.length <= wb.length ? wa : wb;
+        var large = wa.length <= wb.length ? wb : wa;
+        var used = {}, hit = 0;
+        small.forEach(function (w) {
+            for (var i = 0; i < large.length; i++) {
+                if (!used[i] && sameWord(w, large[i])) { used[i] = true; hit++; break; }
+            }
+        });
+        // bade naam ke hisaab se: extra shabd wale (galat) product ka score girta hai
+        return hit / Math.max(wa.length, wb.length);
+    }
+
+    // Variant-shabd (Pro / Plus / FE / Ultra ...) dono naam me same hone chahiye:
+    // "Note 17" aur "Note 17 Pro" alag product hain, bhale 80% shabd milte hon.
+    var VARIANT_WORDS = new Set(['pro', 'plus', 'max', 'ultra', 'fe', 'se', 'lite', 'neo', 'mini', 'prime', 'edge',
+        'turbo', 'gt', 'air', 'power', 'fold', 'flip', 'youth', 'slim', 'active', 'speed']);
+    function sameVariant(a, b) {
+        var va = coreWords(a).filter(function (w) { return VARIANT_WORDS.has(w); }).sort().join(',');
+        var vb = coreWords(b).filter(function (w) { return VARIANT_WORDS.has(w); }).sort().join(',');
+        return va === vb;
+    }
+
+    // Storage (128 GB / 256 GB / 1 TB): title me jo sabse bada GB/TB hai wahi storage hai (RAM chhota hota hai).
+    function storageGb(product) {
+        if (product._gb !== undefined) return product._gb;
+        var best = 0, re = /(\d+(?:\.\d+)?)\s*(gb|tb)\b/gi, m;
+        var t = String(product.title || '');
+        while ((m = re.exec(t))) {
+            var v = parseFloat(m[1]) * (m[2].toLowerCase() === 'tb' ? 1024 : 1);
+            if (v > best) best = v;
+        }
+        product._gb = best;
+        return best;
+    }
+    function sameStorage(a, b) {
+        var x = storageGb(a), y = storageGb(b);
+        return !x || !y || x === y;
+    }
+
+    // ---- Rule 3: Price Variance Limit (20%) ----
+    function priceWithinLimit(a, b, maxDiff) {
+        if (!a.price || !b.price) return false;
+        var hi = Math.max(a.price, b.price), lo = Math.min(a.price, b.price);
+        return (hi - lo) / hi <= maxDiff;      // sasta product mahenge ka kam se kam 80%
+    }
+
+    // Model number (s23, 15, 5000 ...) bilkul same hona chahiye; 5g / gb / mah jaise spec-shabd ignore.
+    var SPEC_TOKEN = /^(\d+g|\d+gb|\d+tb|\d+mah|\d+w|\d+hz|\d+mp|\d+h|\d+mm|\d+cm|\d+ml|\d+l)$/;
+    function sameModelNumbers(a, b) {
+        var x = a.filter(function (w) { return !SPEC_TOKEN.test(w); });
+        var y = b.filter(function (w) { return !SPEC_TOKEN.test(w); });
+        if (!x.length || !y.length) return true;
+        var small = x.length <= y.length ? x : y, large = x.length <= y.length ? y : x;
+        return small.every(function (w) { return large.indexOf(w) !== -1; });
+    }
+
+    // Dusre stores me ASLI (dataset me maujood) same product dhundhta hai.
+    // 3 sakht niyam: (1) category+subcategory same (2) naam 80% match (3) keemat me max 20% fark.
+    // Extra suraksha: model number / capacity (digits) bhi milne chahiye (iPhone 15 != iPhone 16).
+    function findStoreMatches(product) {
+        if (!product) return {};
+        buildMatchIndex();
+        if (product._matches) return product._matches;
+
+        var minName = CFG.COMPARE_MIN_NAME_MATCH || 0.65;
+        var maxDiff = (CFG.COMPARE_MAX_PRICE_DIFF === undefined) ? 0.2 : CFG.COMPARE_MAX_PRICE_DIFF;
+        var tokens = matchTokens(product);
+        var found = {};
+
+        if (tokens.length >= 2 && product.price) {
+            var candidates = new Set();
+            tokens.forEach(function (w) {
+                var list = matchIndex.inv.get(w);
+                if (list && list.length <= 400) list.forEach(function (i) { candidates.add(i); });
+            });
+            var myDigits = digitTokens(product);
+
+            candidates.forEach(function (i) {
+                var other = DATA[i];
+                if (other === product || other.store === product.store) return;
+
+                if (!sameCategory(product, other)) return;                    // Rule 1
+                if (!priceWithinLimit(product, other, maxDiff)) return;       // Rule 3 (sasta check pehle)
+
+                var ratio = nameMatchRatio(product, other);                   // Rule 2
+                if (ratio < minName) return;
+                if (!sameVariant(product, other)) return;                     // Pro / FE / Ultra same
+                if (!sameStorage(product, other)) return;
+                if (!sameSpecs(product, other)) return;                       // RAM/Storage, ml/gram/pack, clothing + accessory rules                     // 128GB vs 256GB nahi
+
+                matchTokens(other);
+                if (!sameModelNumbers(myDigits, digitTokens(other))) return;
+
+                var gap = Math.abs(product.price - other.price) / Math.max(product.price, other.price);
+                var score = ratio - gap / 10;     // naam sabse pehle, phir keemat ke kareeb wala
+                if (!found[other.store] || found[other.store].score < score) {
+                    found[other.store] = { score: score, product: other };
+                }
+            });
+        }
+
+        var result = {};
+        Object.keys(found).forEach(function (store) { result[store] = found[store].product; });
+        product._matches = result;
+        return result;
+    }
+
+    /* ---------------- same-category suggestions ---------------- */
+
+    function getSuggestions(product, excludeIds) {
+        if (!product) return [];
+        buildMatchIndex();
+        var exclude = excludeIds || [];
+        var skip = {};
+        exclude.forEach(function (id) { skip[id] = true; });
+        skip[product.id] = true;
+
+        var pool = [];
+        var seen = {};
+        DATA.forEach(function (other) {
+            if (skip[other.id] || !sameCategory(product, other)) return;   // pehle: category + subcategory bilkul same
+            pool.push(other); seen[other.id] = true;
+        });
+        if (pool.length < 24) {
+            DATA.forEach(function (other) {
+                if (skip[other.id] || seen[other.id] || other.family !== product.family || !genderCompatible(product, other, true)) return;
+                pool.push(other); seen[other.id] = true;
+            });
+        }
+        if (pool.length < 24) {
+            DATA.forEach(function (other) {
+                if (skip[other.id] || seen[other.id] || other.category !== product.category || !genderCompatible(product, other, true)) return;
+                pool.push(other); seen[other.id] = true;
+            });
+        }
+
+        var scored = pool.map(function (other) {
+            return { p: other, s: similarity(product, other) + ((other.discount || 0) / 1000) };
+        });
+        scored.sort(function (a, b) {
+            if (b.s !== a.s) return b.s - a.s;
+            return (b.p.popularity || 0) - (a.p.popularity || 0);
+        });
+        return scored.map(function (entry) { return entry.p; });
+    }
+
+    /* ---------------- pasted link -> product ---------------- */
+
+    var urlIndex = null;
+
+    function findByUrl(rawUrl) {
+        var key = URLS.productKey(rawUrl);
+        if (!key) return null;
+        if (!urlIndex || urlIndex.count !== DATA.length) {
+            urlIndex = { count: DATA.length, map: new Map() };
+            DATA.forEach(function (product) {
+                var k = URLS.productKey(product.link);
+                if (k && !urlIndex.map.has(k)) urlIndex.map.set(k, product);
+            });
+        }
+        return urlIndex.map.get(key) || null;
+    }
+
+    // Link ke path se product-naam jaise shabd (Flipkart / Myntra / Meesho links me hote hain)
+    function slugFromUrl(rawUrl) {
+        var u = URLS.parse(rawUrl);
+        if (!u) return '';
+        var skipSegments = { dp: 1, gp: 1, p: 1, buy: 1, s: 1, product: 1, d: 1 };
+        var best = '';
+        u.pathname.split('/').forEach(function (segment) {
+            var s;
+            try { s = decodeURIComponent(segment); } catch (e) { s = segment; }
+            if (!s || skipSegments[s.toLowerCase()]) return;
+            if (!/[a-z]/i.test(s) || !/[-+_]/.test(s)) return;
+            if (s.length > best.length) best = s;
+        });
+        return best.replace(/[-+_]+/g, ' ').trim();
+    }
+
+    return {
+        warmUp: function () { buildIndex(); buildMatchIndex(); },
+        search: search,
+        normalize: norm,
+        editDistance: editDistance,
+        findStoreMatches: findStoreMatches,
+        getSuggestions: getSuggestions,
+        findByUrl: findByUrl,
+        slugFromUrl: slugFromUrl,
+        similarity: similarity,
+        auditCategories: auditCategories
+    };
+})();
+
 
 /* ============================================================
    CRACK SHOPPING - script.js
@@ -432,7 +1648,12 @@ document.addEventListener('DOMContentLoaded', function () {
         priceBlockDiscountTag: qs('#price-block-discount-tag'),
         buyOnAmazonBtn: qs('#buy-on-amazon-btn'),
 
+        priceComparisonSection: qs('#price-comparison-section'),
         priceComparisonGrid: qs('#price-comparison-grid'),
+        alsoAvailableBlock: qs('#also-available-block'),
+        suggestedSection: qs('#suggested-products-section'),
+        suggestedGrid: qs('#suggested-products-grid'),
+        suggestedSentinel: qs('#suggested-products-sentinel'),
         comparisonCardAmazon: qs('#comparison-card-amazon'),
         comparisonCardFlipkart: qs('#comparison-card-flipkart'),
         comparisonCardMeesho: qs('#comparison-card-meesho'),
@@ -528,11 +1749,14 @@ document.addEventListener('DOMContentLoaded', function () {
             clamp: clamp,
             normalizeSearchText: normalizeSearchText,
             buildStoreSearchUrl: buildStoreSearchUrl,
-            shareProductDetails: shareProductDetails
+            shareProductDetails: shareProductDetails,
+            sanitizeUrl: window.CRACK_SHOPPING_URL.sanitize,
+            engine: window.CrackShoppingEngine
         }
     };
 
 });
+
 
 /* ============================================================
    PART 2 — Navigation + Home Reset Logic
@@ -685,8 +1909,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
 });
 
+
 /* ============================================================
    PART 3 — Search Bar + Product Link Recognition
+   (dummy boAt product hata diya gaya; ab sirf asli dataset product)
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -694,6 +1920,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var dom = window.CrackShopping.dom;
     var state = window.CrackShopping.state;
     var utils = window.CrackShopping.utils;
+    var engine = window.CrackShoppingEngine;
 
     var PLATFORM_PATTERNS = [
         { platform: 'amazon', hostPattern: /amazon\.|amzn\.(in|to)/i },
@@ -702,37 +1929,11 @@ document.addEventListener('DOMContentLoaded', function () {
         { platform: 'myntra', hostPattern: /myntra\.com/i }
     ];
 
-    var DEMO_SEARCHED_PRODUCT = {
-        id: 'boat-rockerz-450',
-        title: 'boAt Rockerz 450 Bluetooth On-Ear Headphones with Mic (Black)',
-        image: 'assets/products/boat-rockerz-450.png',
-        rating: 4.2,
-        reviewsCount: '1,23,456',
-        specs: ['Bluetooth 5.0', 'Up to 15 Hours Playback', 'Built-in Microphone', '40mm Dynamic Drivers'],
-        prices: {
-            amazon: { price: 1799, oldPrice: 3990, discount: '55% Off' },
-            flipkart: { price: 1899, oldPrice: 3990, discount: '53% Off' },
-            meesho: { price: 1850, oldPrice: 3990, discount: '54% Off' },
-            myntra: { price: 1950, oldPrice: 3990, discount: '51% Off' }
-        }
-    };
+    var FALLBACK_IMAGE = 'crack-shopping.png';
 
     /* ------------------------------------------------------------
-       DUAL-MODE DETECTION
-       A single search bar must understand two very different kinds
-       of input: a pasted store URL, or a plain keyword (English or
-       Hindi). detectSearchMode() is the ONLY place that decides
-       which of the two the user meant — everything else just
-       routes to handleUrlSearch() or handleKeywordSearch().
+       DUAL-MODE DETECTION  (link ya keyword)
        ------------------------------------------------------------ */
-
-    // A string only "looks like" a URL when it has no spaces (URLs never
-    // contain unescaped whitespace, but multi-word keywords like
-    // "toy car" or "kitchen set" always do) AND it either already carries
-    // a protocol, or its bare hostname has a real dot-separated domain
-    // shape (e.g. "amazon.in/dp/xyz", "amzn.in/d/xyz"). Single words with
-    // no dot ("car", "kitchen", "headphones") never match this, so they
-    // fall straight through to keyword search.
     var BARE_DOMAIN_PATTERN = /^[a-z0-9-]+(\.[a-z0-9-]+)+(\/[^\s]*)?$/i;
 
     function detectSearchMode(rawInput) {
@@ -758,15 +1959,9 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             parsedUrl = new URL(candidate);
         } catch (err) {
-            // Doesn't even parse as a URL once given a protocol — treat
-            // whatever the user typed as a keyword instead of throwing
-            // an "invalid link" error at a plain search term.
             return { mode: 'keyword', query: trimmed };
         }
 
-        // A hostname with no dot at all (e.g. "https://localhost") is not
-        // a real store domain — fall back to keyword search rather than
-        // pretending it's a link.
         if (!/\./.test(parsedUrl.hostname)) {
             return { mode: 'keyword', query: trimmed };
         }
@@ -814,32 +2009,63 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    function renderSearchResults(parsedLink,productOverride) {
-        var product = productOverride || DEMO_SEARCHED_PRODUCT;
-        var platform = parsedLink.platform;
-        var priceInfo = product.prices
-    ? (product.prices[platform] || product.prices.amazon)
-    : {
-        price: product.price,
-        oldPrice: product.oldPrice,
-        discount: (product.discount === null || product.discount === undefined) ? '' : product.discount + '% Off'
-    };
+    function attachImageFallback(img) {
+        if (!img || img.getAttribute('data-fallback-bound')) return;
+        img.setAttribute('data-fallback-bound', '1');
+        img.addEventListener('error', function () {
+            if (img.getAttribute('data-fallback-used')) return;
+            img.setAttribute('data-fallback-used', '1');
+            img.setAttribute('src', FALLBACK_IMAGE);
+        });
+    }
+
+    function toggleDisplay(el, visible) {
+        if (!el) return;
+        el.style.display = visible ? '' : 'none';
+    }
+
+    // Ek store ke liye comparison-card ka data (us store ka apna asli product).
+    function toStoreData(item) {
+        var hasOld = item.oldPrice && item.price && item.oldPrice > item.price;
+        return {
+            id: item.id,
+            price: item.price,
+            oldPrice: hasOld ? item.oldPrice : null,
+            discount: (item.discount === null || item.discount === undefined) ? '' : item.discount + '% Off',
+            link: item.link || '',
+            title: item.title,
+            image: item.image
+        };
+    }
+
+    function renderSearchResults(parsedLink, productOverride) {
+        var product = productOverride;
+        if (!product) return;   // dummy fallback nahi: asli product hi dikhta hai
+
+        var platform = product.store;
+
+        // SIRF asli matches: dusre store ke data me jo product sach me maujood hai.
+        var matches = engine.findStoreMatches(product);
+        var prices = {};
+        prices[product.store] = toStoreData(product);
+        Object.keys(matches).forEach(function (storeName) {
+            if (matches[storeName] && matches[storeName].price) {
+                prices[storeName] = toStoreData(matches[storeName]);
+            }
+        });
+        var priceInfo = prices[product.store];
 
         state.activeSearchMode = 'url';
         state.searchedProduct = {
             product: product,
             platform: platform,
-            searchedUrl: parsedLink.url.href
+            searchedUrl: (parsedLink && parsedLink.url && parsedLink.url.href) || product.link || ''
         };
 
         if (dom.searchResultsSection) {
             utils.setAttr(dom.searchResultsSection, 'data-visibility', 'visible');
         }
 
-        // Hide the big hero heading/badge/subtext so only the search bar
-        // stays up top, and jump straight to the top of the page so the
-        // search bar + comparison results are what the user sees first —
-        // instead of the page appearing to scroll down.
         if (window.CrackShopping.navigation) {
             window.CrackShopping.navigation.setHeroTextVisibility(false);
             window.CrackShopping.navigation.scrollToTop();
@@ -848,18 +2074,26 @@ document.addEventListener('DOMContentLoaded', function () {
         utils.setText(dom.searchedProductName, product.title.split(' ').slice(0, 3).join(' '));
 
         if (dom.mainProductImage) {
-            dom.mainProductImage.setAttribute('src', product.image);
+            attachImageFallback(dom.mainProductImage);
+            dom.mainProductImage.removeAttribute('data-fallback-used');
+            dom.mainProductImage.setAttribute('src', product.image || FALLBACK_IMAGE);
             dom.mainProductImage.setAttribute('alt', product.title);
         }
         utils.setText(dom.mainProductTitle, product.title);
-        utils.setText(dom.ratingValue, product.rating ? '(' + product.rating + ')' : '');
+
+        // Dataset me rating / specs hain hi nahi - dummy "4.2 stars / Bluetooth 5.0" chhupa do.
+        var hasRating = !!product.rating;
+        utils.setText(dom.ratingValue, hasRating ? '(' + product.rating + ')' : '');
         utils.setText(dom.ratingCount, product.reviewsCount ? product.reviewsCount + ' ratings' : '');
+        toggleDisplay(utils.qs('#main-product-rating-row'), hasRating);
+        toggleDisplay(utils.qs('#main-product-specs-list'), !!(product.specs && product.specs.length));
 
         var platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
         utils.setText(dom.priceBlockLabel, 'Price on ' + platformLabel);
         utils.setText(dom.priceBlockCurrent, priceInfo.price ? utils.formatPrice(priceInfo.price) : 'Check price on store');
-        utils.setText(dom.priceBlockOld, (priceInfo.price && priceInfo.oldPrice > priceInfo.price) ? utils.formatPrice(priceInfo.oldPrice) : '');
+        utils.setText(dom.priceBlockOld, (priceInfo.price && priceInfo.oldPrice) ? utils.formatPrice(priceInfo.oldPrice) : '');
         utils.setText(dom.priceBlockDiscountTag, priceInfo.discount);
+        toggleDisplay(dom.priceBlockDiscountTag, !!priceInfo.discount);
 
         if (dom.buyOnAmazonBtn) {
             var btnTextEl = utils.qs('.btn-text', dom.buyOnAmazonBtn);
@@ -871,8 +2105,17 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         document.dispatchEvent(new CustomEvent('crackshopping:searchResultsUpdated', {
-            detail: { product: product, platform: platform }
+            detail: { product: product, platform: platform, prices: prices, matches: matches }
         }));
+    }
+
+    // Dataset ke kisi bhi product ko "searched product" ki tarah kholta hai.
+    function openProduct(productItem) {
+        if (!productItem) return;
+        var url;
+        try { url = new URL(productItem.link || ('https://www.' + productItem.store + '.com/')); }
+        catch (e) { url = new URL('https://www.' + productItem.store + '.com/'); }
+        renderSearchResults({ valid: true, url: url, platform: productItem.store, reason: null }, productItem);
     }
 
     function handleUrlSearch(detection) {
@@ -884,7 +2127,22 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        renderSearchResults({ valid: true, url: detection.url, platform: platform, reason: null });
+        // 1) Pasted link ko dataset ke asli product se milao (ASIN / itm id / product id se)
+        var known = engine.findByUrl(detection.url.href);
+        if (known) {
+            renderSearchResults({ valid: true, url: detection.url, platform: platform, reason: null }, known);
+            return;
+        }
+
+        // 2) Exact product nahi mila: link ke naam-shabdon se milte-julte products dikhao
+        var slug = engine.slugFromUrl(detection.url.href);
+        hideUrlSearchResults();
+        if (slug) {
+            handleKeywordSearch(slug);
+            showSearchError('We couldn\'t find this exact product in our database. Showing similar products instead.');
+        } else {
+            showSearchError('This product isn\'t in our database yet. Try searching by product name.');
+        }
     }
 
     function handleKeywordSearch(query) {
@@ -904,9 +2162,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
         clearSearchError();
 
-        // Jump to the very top instantly the moment a search is fired —
-        // before results render — so the user is already at the top when
-        // the new content appears, instead of the page appearing to slide.
         if (window.CrackShopping.navigation) {
             window.CrackShopping.navigation.scrollToTop();
         }
@@ -936,12 +2191,15 @@ document.addEventListener('DOMContentLoaded', function () {
         detectSearchMode: detectSearchMode,
         detectPlatformFromUrl: detectPlatformFromUrl,
         renderSearchResults: renderSearchResults,
+        openProduct: openProduct,
         hideUrlSearchResults: hideUrlSearchResults,
         clearSearchError: clearSearchError,
-        DEMO_SEARCHED_PRODUCT: DEMO_SEARCHED_PRODUCT
+        attachImageFallback: attachImageFallback,
+        FALLBACK_IMAGE: FALLBACK_IMAGE
     };
 
 });
+
 
 /* ============================================================
    PART 4 — Category Filtering + Product Rendering
@@ -965,202 +2223,23 @@ console.log(
 );
 
     /* ============================================================
-       KEYWORD / TEXT SEARCH ENGINE
-       ============================================================
-       This is an extensible Hindi + English intent map. Each entry
-       lists every word (English and Hindi) that should trigger it.
-       "categories" broadens recall to a whole PRODUCT_DATASET
-       category (useful for Hindi words that never appear in any
-       English title). "titleKeywords" are extra English substrings
-       to look for directly inside product titles. To teach the
-       search more words later, just add another entry here — no
-       other code needs to change.
+       KEYWORD / TEXT SEARCH  (Smart + Fuzzy)
+       ------------------------------------------------------------
+       Asli kaam CrackShoppingEngine (upar) karta hai:
+         - spelling galti (hedfon -> headphone, samsng -> samsung)
+         - Hinglish / Hindi (kar, gaadi, कार -> car)
+         - shabd ka shuruaati hissa (head -> headphone), plural/singular
+       Naya Hindi / Hinglish shabd sikhana ho to engine me INTENTS list me jodein.
        ============================================================ */
 
-    var KEYWORD_INTENTS = [
-        {
-            englishTerms: ['car', 'cars', 'toy car', 'vehicle', 'vehicles'],
-            hindiTerms: ['कार', 'गाड़ी', 'गाड़ियां'],
-            categories: ['vehicles']
-        },
-        {
-            englishTerms: ['toy', 'toys'],
-            hindiTerms: ['खिलौना', 'खिलौने', 'टॉय'],
-            categories: ['toy']
-        },
-        {
-            englishTerms: ['kitchen', 'kitchen set'],
-            hindiTerms: ['किचन', 'रसोई'],
-            categories: ['kitchen-set']
-        },
-        {
-            englishTerms: ['headphone', 'headphones', 'earphone', 'earphones', 'earbud', 'earbuds'],
-            hindiTerms: ['हेडफोन'],
-            categories: ['headphones'],
-            titleKeywords: ['headphone', 'earbud', 'earphone']
-        },
-        {
-            englishTerms: ['electric', 'electronics', 'electronic'],
-            hindiTerms: ['इलेक्ट्रॉनिक'],
-            categories: ['electric']
-        },
-        {
-            englishTerms: ['watch', 'watches', 'smartwatch', 'smartwatches'],
-            hindiTerms: ['घड़ी', 'वॉच'],
-            categories: ['smartwatches']
-        },
-        {
-            englishTerms: ['clothes', 'clothing', 'cloth'],
-            hindiTerms: ['कपड़े', 'कपड़ा'],
-            categories: ['clothing']
-        },
-        {
-            englishTerms: ['shoes', 'shoe', 'footwear'],
-            hindiTerms: ['जूते', 'जूता'],
-            categories: [],
-            titleKeywords: ['shoe']
-        },
-        {
-            englishTerms: ['mobile', 'phone', 'mobiles', 'phones', 'smartphone'],
-            hindiTerms: ['मोबाइल', 'फोन'],
-            categories: ['mobile-accessories']
-        }
-    ];
-
-    function buildKeywordIndex() {
-        var index = {};
-        KEYWORD_INTENTS.forEach(function (intent) {
-            var allTerms = (intent.englishTerms || []).concat(intent.hindiTerms || []);
-            var titleTerms = (intent.titleKeywords || []).concat(intent.englishTerms || []);
-
-            allTerms.forEach(function (term) {
-                var key = utils.normalizeSearchText(term);
-                if (!key) return;
-                if (!index[key]) {
-                    index[key] = { categories: [], titleKeywords: [] };
-                }
-                (intent.categories || []).forEach(function (categoryValue) {
-                    if (index[key].categories.indexOf(categoryValue) === -1) {
-                        index[key].categories.push(categoryValue);
-                    }
-                });
-                titleTerms.forEach(function (titleTerm) {
-                    var normalizedTitleTerm = utils.normalizeSearchText(titleTerm);
-                    if (normalizedTitleTerm && index[key].titleKeywords.indexOf(normalizedTitleTerm) === -1) {
-                        index[key].titleKeywords.push(normalizedTitleTerm);
-                    }
-                });
-            });
-        });
-        return index;
-    }
-
-    var KEYWORD_INDEX = buildKeywordIndex();
-
-    function escapeRegExpChars(str) {
-        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    // Matches "needle" against "haystack" only at the start of a word
-    // (preceded by the string start or a non-alphanumeric character).
-    // This lets a short stem like "earbud" correctly match "earbuds",
-    // while stopping a generic term like "phone" from falsely matching
-    // in the middle of an unrelated word like "headphones".
-    function containsWordStart(haystack, needle) {
-        if (!needle) return false;
-        try {
-            var pattern = new RegExp('(^|[^a-z0-9])' + escapeRegExpChars(needle), 'i');
-            return pattern.test(haystack);
-        } catch (err) {
-            return haystack.indexOf(needle) !== -1;
-        }
-    }
-
-    function expandQueryIntoSearchTerms(queryNormalized, queryTokens) {
-        var categories = [];
-        var titleTerms = [];
-
-        function absorb(entry) {
-            if (!entry) return;
-            entry.categories.forEach(function (categoryValue) {
-                if (categories.indexOf(categoryValue) === -1) categories.push(categoryValue);
-            });
-            entry.titleKeywords.forEach(function (titleTerm) {
-                if (titleTerms.indexOf(titleTerm) === -1) titleTerms.push(titleTerm);
-            });
-        }
-
-        absorb(KEYWORD_INDEX[queryNormalized]);
-        queryTokens.forEach(function (token) {
-            absorb(KEYWORD_INDEX[token]);
-        });
-
-        return { categories: categories, titleTerms: titleTerms };
-    }
-
-    function scoreProductForQuery(productItem, queryNormalized, queryTokens, expanded) {
-        var title = utils.normalizeSearchText(productItem.title);
-        var score = 0;
-
-        if (queryNormalized && title === queryNormalized) {
-            score = Math.max(score, 100);
-        }
-        if (queryNormalized && containsWordStart(title, queryNormalized)) {
-            score = Math.max(score, 85);
-        }
-        queryTokens.forEach(function (token) {
-            if (containsWordStart(title, token)) {
-                score = Math.max(score, 70);
-            }
-        });
-        expanded.titleTerms.forEach(function (titleTerm) {
-            if (containsWordStart(title, titleTerm)) {
-                score = Math.max(score, 65);
-            }
-        });
-        (productItem.categories || []).forEach(function (categoryValue) {
-            if (expanded.categories.indexOf(categoryValue) !== -1) {
-                score = Math.max(score, 50);
-            }
-        });
-
-        var idNormalized = utils.normalizeSearchText(productItem.id.replace(/-/g, ' '));
-        var brandNormalized = utils.normalizeSearchText(productItem.brand);
-        var storeNormalized = utils.normalizeSearchText(productItem.store);
-        var weakTerms = queryTokens.concat(expanded.titleTerms);
-
-        weakTerms.forEach(function (term) {
-            if (!term) return;
-            if (containsWordStart(idNormalized, term)) score = Math.max(score, 30);
-            if (brandNormalized === term) score = Math.max(score, 25);
-            if (storeNormalized === term) score = Math.max(score, 20);
-        });
-
-        return score;
-    }
+    var engine = window.CrackShoppingEngine;
+    var searchApi = window.CrackShopping.search || {};
+    var lastSearchMeta = { query: '', corrected: '' };
 
     function getProductsByKeyword(rawQuery) {
-        var queryNormalized = utils.normalizeSearchText(rawQuery);
-        if (!queryNormalized) return [];
-
-        var queryTokens = queryNormalized.split(' ').filter(Boolean);
-        var expanded = expandQueryIntoSearchTerms(queryNormalized, queryTokens);
-
-        var scored = PRODUCT_DATASET.map(function (productItem) {
-            return {
-                product: productItem,
-                score: scoreProductForQuery(productItem, queryNormalized, queryTokens, expanded)
-            };
-        }).filter(function (entry) {
-            return entry.score > 0;
-        });
-
-        scored.sort(function (a, b) {
-            if (b.score !== a.score) return b.score - a.score;
-            return (b.product.popularity || 0) - (a.product.popularity || 0);
-        });
-
-        return scored.map(function (entry) { return entry.product; });
+        var result = engine.search(rawQuery);
+        lastSearchMeta = { query: rawQuery, corrected: result.corrected };
+        return result.results;
     }
 
     function createProductCardElement(productItem) {
@@ -1193,7 +2272,11 @@ console.log(
         imageWrapper.className = 'product-image-wrapper';
         var img = document.createElement('img');
         img.className = 'product-image';
-        img.setAttribute('src', productItem.image);
+        // lazy: 3000+ products ki images ek saath load nahi hoti -> page halka rehta hai
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        if (searchApi.attachImageFallback) { searchApi.attachImageFallback(img); }
+        img.setAttribute('src', productItem.image || (searchApi.FALLBACK_IMAGE || 'crack-shopping.png'));
         img.setAttribute('alt', productItem.title);
         imageWrapper.appendChild(img);
 
@@ -1373,6 +2456,18 @@ console.log(
         state.deals.bestDealsRendered = showcased.length;
         state.deals.currentlyDisplayedIds = showcased.map(function (item) { return item.id; });
 
+        // Spelling / Hinglish se sudhaara gaya ho to bata do: "Showing results for 'car'"
+        if (matched.length && lastSearchMeta.corrected && dom.bestDealsGrid) {
+            var note = document.createElement('p');
+            note.className = 'no-results-message search-correction-note';
+            note.appendChild(document.createTextNode('Showing results for \u201C'));
+            var strong = document.createElement('strong');
+            utils.setText(strong, lastSearchMeta.corrected);
+            note.appendChild(strong);
+            note.appendChild(document.createTextNode('\u201D'));
+            dom.bestDealsGrid.insertBefore(note, dom.bestDealsGrid.firstChild);
+        }
+
         document.dispatchEvent(new CustomEvent('crackshopping:keywordSearchApplied', {
             detail: { query: rawQuery, count: matched.length }
         }));
@@ -1395,6 +2490,25 @@ console.log(
 
     document.addEventListener('crackshopping:homeReset', function () {
         applyCategoryFilter('');
+    });
+
+    // Category button dabane par "Best Deals" heading me category ka naam + total products dikhao
+    // (jaise "Mobile - 249 Deals"). Category hatne par purana heading wapas.
+    var bestDealsHeading = document.getElementById('best-deals-heading');
+    var DEFAULT_HEADING_TEXT = 'Best Deals Right Now';
+    document.addEventListener('crackshopping:categoryChanged', function (event) {
+        if (!bestDealsHeading || !bestDealsHeading.lastChild) return;
+        var detail = event.detail || {};
+        var text = DEFAULT_HEADING_TEXT;
+        if (detail.category) {
+            var activeBtn = utils.qs('.category-btn.is-active');
+            var labelEl = activeBtn ? utils.qs('.category-btn-text', activeBtn) : null;
+            if (labelEl) {
+                text = labelEl.textContent.trim() + ' \u2013 ' + detail.count + ' Deals';
+            }
+        }
+        // heading ka last child text-node hai (icon span alag rehta hai)
+        bestDealsHeading.lastChild.textContent = '\n                            ' + text + '\n                        ';
     });
 
     window.CrackShopping.products = {
@@ -1422,8 +2536,15 @@ console.log(
 
 });
 
+
 /* ============================================================
-   PART 5 — Infinite Scroll / More Deals
+   PART 5 — Infinite Scroll / More Deals  (rewritten)
+   ------------------------------------------------------------
+   Pehle: 4-4 product, 500ms delay, aur IntersectionObserver sirf tab chalta
+   tha jab sentinel screen me "aata/jaata" tha -> scroll beech me ruk jaata tha.
+   Ab: ek baar me 24 cards, turant render, har batch ke baad check karta hai ki
+   sentinel abhi bhi screen ke paas hai ya nahi (to agla batch khud load),
+   observer + passive scroll listener dono. Pool sirf reset par ek baar banta hai.
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -1438,62 +2559,44 @@ document.addEventListener('DOMContentLoaded', function () {
     var PRODUCT_DATASET = productsApi.PRODUCT_DATASET;
     var renderProductsIntoGrid = productsApi.renderProductsIntoGrid;
 
-    var MORE_DEALS_PAGE_SIZE = 4;
-    var LOADING_DELAY_MS = 500;
+    var MORE_DEALS_PAGE_SIZE = 24;      // ek baar me 20-30 products
+    var PRELOAD_DISTANCE_PX = 700;      // sentinel screen se itna door ho tab hi agla batch
+
+    var pool = null;                    // is category / search / filter ka poora product-pool
 
     /**
-     * Builds the eligible product pool for "More Great Deals", honoring
-     * the same category AND advanced filters currently applied to the
-     * Best Deals grid (Parts 4 & 6), sorted the same way — and excluding
-     * every product id already rendered in the Best Deals grid so no
-     * product ever appears twice on the page at the same time.
+     * "More Great Deals" ka pool: wahi category / keyword / advanced filters / sort
+     * jo Best Deals grid par laagu hain, aur Best Deals me dikh chuke products hata kar.
+     * Sirf resetInfiniteScroll() me ek baar banta hai (har scroll par nahi).
      */
-    function getMoreDealsPool() {
+    function buildMoreDealsPool() {
         var basePool = (state.activeSearchMode === 'keyword' && typeof productsApi.getProductsByKeyword === 'function')
             ? productsApi.getProductsByKeyword(state.activeKeywordQuery)
             : productsApi.getProductsByCategory(state.activeCategory);
         var advancedFiltersApi = window.CrackShopping.advancedFilters;
 
-        var pool = basePool;
+        var list = basePool;
         if (advancedFiltersApi && typeof advancedFiltersApi.productMatchesFilters === 'function') {
-            pool = basePool.filter(function (productItem) {
+            list = basePool.filter(function (productItem) {
                 return advancedFiltersApi.productMatchesFilters(productItem, state.activeFilters);
             });
         }
 
-        if (advancedFiltersApi && typeof advancedFiltersApi.sortProducts === 'function') {
-            pool = advancedFiltersApi.sortProducts(pool, state.activeFilters.sortBy);
+        // Keyword search apni relevance-order rakhta hai; sort sirf tab jab user ne chuna ho.
+        var sortBy = state.activeFilters.sortBy;
+        if (advancedFiltersApi && typeof advancedFiltersApi.sortProducts === 'function' &&
+            !(state.activeSearchMode === 'keyword' && (!sortBy || sortBy === 'popular'))) {
+            list = advancedFiltersApi.sortProducts(list, sortBy);
         }
 
-        var excludedIds = state.deals.currentlyDisplayedIds || [];
-        return pool.filter(function (productItem) {
-            return excludedIds.indexOf(productItem.id) === -1;
-        });
-    }
-
-    function showLoadingIndicator() {
-        if (!dom.moreDealsGrid) return;
-        var existing = utils.qs('#more-deals-loading-indicator');
-        if (existing) return;
-
-        var loadingEl = document.createElement('p');
-        loadingEl.id = 'more-deals-loading-indicator';
-        loadingEl.className = 'infinite-scroll-loading-text';
-        utils.setText(loadingEl, 'Loading more deals...');
-        dom.moreDealsGrid.appendChild(loadingEl);
-    }
-
-    function hideLoadingIndicator() {
-        var existing = utils.qs('#more-deals-loading-indicator');
-        if (existing && existing.parentNode) {
-            existing.parentNode.removeChild(existing);
-        }
+        var excluded = {};
+        (state.deals.currentlyDisplayedIds || []).forEach(function (id) { excluded[id] = true; });
+        return list.filter(function (productItem) { return !excluded[productItem.id]; });
     }
 
     function showEndOfResultsMessage() {
         if (!dom.moreDealsGrid) return;
-        var existing = utils.qs('#more-deals-end-message');
-        if (existing) return;
+        if (utils.qs('#more-deals-end-message')) return;
 
         var endEl = document.createElement('p');
         endEl.id = 'more-deals-end-message';
@@ -1509,64 +2612,74 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // Search / link-result mode me ye section CSS se display:none hota hai (offsetParent == null).
+    function isSectionVisible() {
+        return !!(dom.moreDealsScrollSentinel && dom.moreDealsScrollSentinel.offsetParent !== null);
+    }
+
+    function isSentinelNearViewport() {
+        if (!isSectionVisible()) return false;
+        var rect = dom.moreDealsScrollSentinel.getBoundingClientRect();
+        return rect.top <= window.innerHeight + PRELOAD_DISTANCE_PX;
+    }
+
     function loadMoreDeals() {
         if (state.deals.isLoading || state.deals.isExhausted) return;
         if (!dom.moreDealsGrid) return;
+        if (!PRODUCT_DATASET.length) return;      // products.json abhi aayi nahi
+        if (!isSectionVisible()) return;          // section chhupa hai (search results dikh rahe hain)
 
         state.deals.isLoading = true;
-        showLoadingIndicator();
 
-        window.setTimeout(function () {
-            var pool = getMoreDealsPool();
-            var startIndex = state.deals.moreDealsRendered;
-            var nextBatch = pool.slice(startIndex, startIndex + MORE_DEALS_PAGE_SIZE);
+        if (!pool) pool = buildMoreDealsPool();
 
-            hideLoadingIndicator();
+        var startIndex = state.deals.moreDealsRendered;
+        var nextBatch = pool.slice(startIndex, startIndex + MORE_DEALS_PAGE_SIZE);
 
-            if (nextBatch.length === 0) {
-                state.deals.isExhausted = true;
-                showEndOfResultsMessage();
-                state.deals.isLoading = false;
-                return;
-            }
-
-            renderProductsIntoGrid(dom.moreDealsGrid, nextBatch, true);
-            if (dom.moreDealsScrollSentinel && dom.moreDealsGrid.lastElementChild !== dom.moreDealsScrollSentinel) {
-                dom.moreDealsGrid.appendChild(dom.moreDealsScrollSentinel);
-            }
-
-            state.deals.moreDealsRendered = startIndex + nextBatch.length;
-
-            if (state.deals.moreDealsRendered >= pool.length) {
-                state.deals.isExhausted = true;
-                showEndOfResultsMessage();
-            }
-
+        if (nextBatch.length === 0) {
+            state.deals.isExhausted = true;
+            showEndOfResultsMessage();
             state.deals.isLoading = false;
-        }, LOADING_DELAY_MS);
+            return;
+        }
+
+        renderProductsIntoGrid(dom.moreDealsGrid, nextBatch, true);
+        state.deals.moreDealsRendered = startIndex + nextBatch.length;
+
+        if (state.deals.moreDealsRendered >= pool.length) {
+            state.deals.isExhausted = true;
+            showEndOfResultsMessage();
+        }
+
+        state.deals.isLoading = false;
+
+        // Layout settle hone ke baad dekho: agar sentinel abhi bhi screen ke paas hai
+        // (badi screen / kam cards) to agla batch bhi turant load karo.
+        window.requestAnimationFrame(function () {
+            if (!state.deals.isExhausted && isSentinelNearViewport()) {
+                loadMoreDeals();
+            }
+        });
     }
 
     function resetInfiniteScroll() {
+        pool = null;
         state.deals.moreDealsRendered = 0;
         state.deals.isLoading = false;
         state.deals.isExhausted = false;
         removeEndOfResultsMessage();
-        hideLoadingIndicator();
 
         if (dom.moreDealsGrid) {
             dom.moreDealsGrid.textContent = '';
-            if (dom.moreDealsScrollSentinel) {
-                dom.moreDealsGrid.appendChild(dom.moreDealsScrollSentinel);
-            }
         }
 
         loadMoreDeals();
     }
 
-    var scrollObserver = null;
+    /* ---- triggers: IntersectionObserver + (hamesha) passive scroll listener ---- */
 
     if ('IntersectionObserver' in window && dom.moreDealsScrollSentinel) {
-        scrollObserver = new IntersectionObserver(function (entries) {
+        var scrollObserver = new IntersectionObserver(function (entries) {
             entries.forEach(function (entry) {
                 if (entry.isIntersecting) {
                     loadMoreDeals();
@@ -1574,42 +2687,50 @@ document.addEventListener('DOMContentLoaded', function () {
             });
         }, {
             root: null,
-            rootMargin: '200px 0px',
+            rootMargin: PRELOAD_DISTANCE_PX + 'px 0px',
             threshold: 0
         });
 
         scrollObserver.observe(dom.moreDealsScrollSentinel);
-    } else if (dom.moreDealsScrollSentinel) {
-        var scrollFallbackHandler = utils.debounce(function () {
-            var rect = dom.moreDealsScrollSentinel.getBoundingClientRect();
-            var isNearViewport = rect.top <= window.innerHeight + 200;
-            if (isNearViewport) {
-                loadMoreDeals();
-            }
-        }, 150);
-        utils.on(window, 'scroll', scrollFallbackHandler);
     }
 
-    document.addEventListener('crackshopping:categoryChanged', function () {
-        resetInfiniteScroll();
-    });
+    // Backup: kuch browsers / layouts me observer sentinel ke "bheetar hi rehne" par dobara fire nahi karta.
+    var scrollTicking = false;
+    function onScrollOrResize() {
+        if (scrollTicking) return;
+        scrollTicking = true;
+        window.requestAnimationFrame(function () {
+            scrollTicking = false;
+            if (!state.deals.isExhausted && isSentinelNearViewport()) {
+                loadMoreDeals();
+            }
+        });
+    }
+    window.addEventListener('scroll', onScrollOrResize, { passive: true });
+    window.addEventListener('resize', onScrollOrResize);
 
-    document.addEventListener('crackshopping:keywordSearchApplied', function () {
-        resetInfiniteScroll();
-    });
+    document.addEventListener('crackshopping:categoryChanged', resetInfiniteScroll);
+    document.addEventListener('crackshopping:keywordSearchApplied', resetInfiniteScroll);
 
+    // Search-result band hone par (section dobara dikhe) pool fresh se bano.
     document.addEventListener('crackshopping:homeReset', function () {
-        resetInfiniteScroll();
+        // applyCategoryFilter('') -> categoryChanged pehle hi reset kar chuka hai;
+        // yahan sirf tab jab abhi tak kuch render nahi hua.
+        if (!state.deals.moreDealsRendered && !state.deals.isExhausted) {
+            resetInfiniteScroll();
+        }
     });
 
     loadMoreDeals();
 
     window.CrackShopping.infiniteScroll = {
         loadMoreDeals: loadMoreDeals,
-        resetInfiniteScroll: resetInfiniteScroll
+        resetInfiniteScroll: resetInfiniteScroll,
+        PAGE_SIZE: MORE_DEALS_PAGE_SIZE
     };
 
 });
+
 
 /* ============================================================
    PART 6 — Advanced Filter Drawer
@@ -1880,8 +3001,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
 });
 
+
 /* ============================================================
-   PART 7 — Product Comparison Modal
+   PART 7 — Product Comparison Modal + product-card clicks
+   (modal me bhi ab dummy price nahi: sirf asli store-matches)
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -1890,83 +3013,81 @@ document.addEventListener('DOMContentLoaded', function () {
     var state = window.CrackShopping.state;
     var utils = window.CrackShopping.utils;
     var productsApi = window.CrackShopping.products;
+    var engine = window.CrackShoppingEngine;
 
     if (!productsApi) return;
 
     var PRODUCT_DATASET = productsApi.PRODUCT_DATASET;
     var ALL_STORES = ['amazon', 'flipkart', 'meesho', 'myntra'];
 
-    function buildDemoComparisonPrices(productItem) {
-        var basePrice = productItem.price;
-        var baseOldPrice = productItem.oldPrice;
+    // Sirf wahi stores jinke data me ye product sach me maujood hai.
+    function buildRealComparison(productItem) {
         var comparison = {};
+        var matches = engine.findStoreMatches(productItem);
 
-        ALL_STORES.forEach(function (storeName, index) {
-            if (storeName === productItem.store) {
-                comparison[storeName] = {
-                    price: basePrice,
-                    oldPrice: baseOldPrice,
-                    discount: productItem.discount + '% Off'
-                };
-                return;
-            }
-
-            var variationSteps = [0, 100, 51, 151];
-            var variation = variationSteps[index % variationSteps.length];
-            var demoPrice = basePrice + variation;
-            var demoDiscountPercent = Math.max(
-                0,
-                Math.round(((baseOldPrice - demoPrice) / baseOldPrice) * 100)
-            );
-
-            comparison[storeName] = {
-                price: demoPrice,
-                oldPrice: baseOldPrice,
-                discount: demoDiscountPercent + '% Off'
+        function entry(item) {
+            var hasOld = item.oldPrice && item.price && item.oldPrice > item.price;
+            return {
+                price: item.price,
+                oldPrice: hasOld ? item.oldPrice : null,
+                discount: (item.discount === null || item.discount === undefined) ? '' : item.discount + '% Off',
+                link: item.link || utils.buildStoreSearchUrl(item.store, item.title)
             };
-        });
+        }
 
+        if (productItem.price) comparison[productItem.store] = entry(productItem);
+        Object.keys(matches).forEach(function (storeName) {
+            if (matches[storeName] && matches[storeName].price) {
+                comparison[storeName] = entry(matches[storeName]);
+            }
+        });
         return comparison;
     }
 
     function openProductComparisonModal(productItem) {
-        if (!dom.productComparisonModal) return;
+        if (!dom.productComparisonModal || !productItem) return;
 
-        var comparisonPrices = buildDemoComparisonPrices(productItem);
+        var comparisonPrices = buildRealComparison(productItem);
         state.activeComparisonProduct = {
             product: productItem,
             comparisonPrices: comparisonPrices
         };
 
         if (dom.modalProductImage) {
-            dom.modalProductImage.setAttribute('src', productItem.image);
+            dom.modalProductImage.setAttribute('src', productItem.image || 'crack-shopping.png');
             dom.modalProductImage.setAttribute('alt', productItem.title);
         }
         utils.setText(dom.modalProductTitle, productItem.title);
-        utils.setText(dom.modalRatingStars, '\u2605\u2605\u2605\u2605\u2606');
-        utils.setText(dom.modalRatingValue, '(' + productItem.rating + ')');
 
-        var priceRowConfig = [
-            { store: 'amazon', priceId: 'modal-price-amazon', discountId: 'modal-discount-amazon' },
-            { store: 'flipkart', priceId: 'modal-price-flipkart', discountId: 'modal-discount-flipkart' },
-            { store: 'meesho', priceId: 'modal-price-meesho', discountId: 'modal-discount-meesho' },
-            { store: 'myntra', priceId: 'modal-price-myntra', discountId: 'modal-discount-myntra' }
-        ];
+        // dataset me rating nahi hai -> dummy stars chhupa do
+        var ratingRow = utils.qs('#modal-product-rating-row');
+        if (ratingRow) {
+            ratingRow.style.display = productItem.rating ? '' : 'none';
+        }
+        if (productItem.rating) {
+            utils.setText(dom.modalRatingStars, '\u2605\u2605\u2605\u2605\u2606');
+            utils.setText(dom.modalRatingValue, '(' + productItem.rating + ')');
+        }
 
-        priceRowConfig.forEach(function (config) {
-            var storeData = comparisonPrices[config.store];
-            if (!storeData) return;
+        ALL_STORES.forEach(function (storeName) {
+            var storeData = comparisonPrices[storeName];
+            var rowEl = utils.qs('#modal-price-row-' + storeName);
+            if (!rowEl) return;
 
-            var priceEl = utils.qs('#' + config.priceId);
-            var discountEl = utils.qs('#' + config.discountId);
-            var rowEl = utils.qs('#modal-price-row-' + config.store);
-            var actionBtn = rowEl ? utils.qs('.modal-store-action-btn', rowEl) : null;
+            if (!storeData) {
+                rowEl.style.display = 'none';
+                return;
+            }
+            rowEl.style.display = '';
 
-            utils.setText(priceEl, utils.formatPrice(storeData.price));
-            utils.setText(discountEl, storeData.discount);
+            utils.setText(utils.qs('#modal-price-' + storeName), utils.formatPrice(storeData.price));
+            utils.setText(utils.qs('#modal-discount-' + storeName), storeData.discount);
+            var discountEl = utils.qs('#modal-discount-' + storeName);
+            if (discountEl) discountEl.style.display = storeData.discount ? '' : 'none';
 
+            var actionBtn = utils.qs('.modal-store-action-btn', rowEl);
             if (actionBtn) {
-                utils.setAttr(actionBtn, 'href', utils.buildStoreSearchUrl(config.store, productItem.title));
+                utils.setAttr(actionBtn, 'href', storeData.link);
             }
         });
 
@@ -1989,13 +3110,17 @@ document.addEventListener('DOMContentLoaded', function () {
         state.activeComparisonProduct = null;
     }
 
+    // id -> product (O(1)); dataset ek baar load hone ke baad map banta hai.
+    var idMap = null;
+    var idMapCount = -1;
+
     function findProductById(productId) {
-        for (var i = 0; i < PRODUCT_DATASET.length; i++) {
-            if (PRODUCT_DATASET[i].id === productId) {
-                return PRODUCT_DATASET[i];
-            }
+        if (!idMap || idMapCount !== PRODUCT_DATASET.length) {
+            idMap = {};
+            PRODUCT_DATASET.forEach(function (item) { idMap[item.id] = item; });
+            idMapCount = PRODUCT_DATASET.length;
         }
-        return null;
+        return idMap[productId] || null;
     }
 
     function handleProductGridClick(event) {
@@ -2023,21 +3148,14 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         var searchApi = window.CrackShopping.search;
-
-if (searchApi && typeof searchApi.renderSearchResults === 'function') {
-    searchApi.renderSearchResults({
-        valid: true,
-        url: new URL(
-            'https://www.' + productItem.store + '.com/product/' + productItem.id
-        ),
-        platform: productItem.store,
-        reason: null
-    },productItem);
-}
+        if (searchApi && typeof searchApi.openProduct === 'function') {
+            searchApi.openProduct(productItem);
+        }
     }
 
     utils.on(dom.bestDealsGrid, 'click', handleProductGridClick);
     utils.on(dom.moreDealsGrid, 'click', handleProductGridClick);
+    utils.on(dom.suggestedGrid, 'click', handleProductGridClick);   // "You May Also Like" cards
 
     utils.on(dom.productComparisonModalClose, 'click', closeProductComparisonModal);
 
@@ -2053,8 +3171,8 @@ if (searchApi && typeof searchApi.renderSearchResults === 'function') {
         }
     });
 
-    // Real <a href="..." target="_blank"> links now — only log for
-    // analytics, don't preventDefault() or the redirect gets blocked.
+    // Real <a href target=_blank> links: sirf log, preventDefault nahi
+    // (Cuelinks apna kaam click par khud karta hai).
     utils.qsa('.modal-store-action-btn').forEach(function (btn) {
         utils.on(btn, 'click', function () {
             var storeName = btn.getAttribute('data-store') || 'this store';
@@ -2069,6 +3187,7 @@ if (searchApi && typeof searchApi.renderSearchResults === 'function') {
     };
 
 });
+
 
 /* ============================================================
    PART 8 — Legal Modals + Contact Modal
@@ -2176,8 +3295,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
 });
 
+
 /* ============================================================
-   PART 9 — Search Results + Comparison State + UI Synchronization
+   PART 9 — Search Results + Real Comparison + Suggested Products
+   ------------------------------------------------------------
+   - Comparison cards sirf un stores ke dikhte hain jinke data me
+     product sach me maujood hai (baaki cards chhup jaate hain).
+   - Har card apne store ka asli title / image / (saaf) link dikhata hai.
+   - Comparison ke neeche "You May Also Like" (Suggested Products):
+     usi category ke asli products, scroll karne par aur load hote hain.
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -2186,6 +3312,9 @@ document.addEventListener('DOMContentLoaded', function () {
     var state = window.CrackShopping.state;
     var utils = window.CrackShopping.utils;
     var searchApi = window.CrackShopping.search;
+    var productsApi = window.CrackShopping.products;
+    var engine = window.CrackShoppingEngine;
+    var CFG = window.CRACK_SHOPPING_CONFIG;
 
     if (!searchApi) return;
 
@@ -2196,16 +3325,12 @@ document.addEventListener('DOMContentLoaded', function () {
         { store: 'myntra', cardEl: dom.comparisonCardMyntra }
     ];
 
-    /* ------------------------------------------------------------
-       "View on <Store>" buttons pehle pura dead the (koi listener
-       hi nahi tha). Ab modal ke buttons jaisa hi consistent demo
-       behaviour de rahe hain, jab tak real affiliate redirect
-       integrate nahi hota.
-       ------------------------------------------------------------ */
-    // These buttons are real <a href="..." target="_blank"> links now, so
-    // clicking them opens the store's website in a new tab on its own —
-    // we only log here for analytics, and must NOT call preventDefault(),
-    // or the redirect would be blocked again.
+    // Comparison cards / modal ki static images ke liye fallback (toote link par logo dikhe).
+    utils.qsa('.comparison-card-image, .modal-product-image, .main-product-image').forEach(function (img) {
+        searchApi.attachImageFallback(img);
+    });
+
+    // Real <a href target=_blank> links: sirf log, preventDefault nahi.
     utils.on(dom.priceComparisonGrid, 'click', function (event) {
         var storeBtn = event.target.closest('.view-on-store-btn');
         if (!storeBtn) return;
@@ -2218,7 +3343,11 @@ document.addEventListener('DOMContentLoaded', function () {
         console.info('[Crack Shopping] Redirecting to ' + storeName + ' affiliate link...');
     });
 
-    function updateComparisonCard(cardEl, storeName, storeData, lowestPrice, productTitle, productImage) {
+    function showEl(el, visible) {
+        if (el) el.style.display = visible ? '' : 'none';
+    }
+
+    function updateComparisonCard(cardEl, storeName, storeData, lowestPrice) {
         if (!cardEl) return;
 
         var priceCurrentEl = utils.qs('.comparison-price-current', cardEl);
@@ -2230,79 +3359,165 @@ document.addEventListener('DOMContentLoaded', function () {
         var storeActionBtn = utils.qs('.view-on-store-btn', cardEl);
 
         utils.setText(priceCurrentEl, utils.formatPrice(storeData.price));
-        utils.setText(priceOldEl, utils.formatPrice(storeData.oldPrice));
-        utils.setText(titleEl, productTitle);
+        utils.setText(priceOldEl, storeData.oldPrice ? utils.formatPrice(storeData.oldPrice) : '');
+        utils.setText(titleEl, storeData.title);
         utils.setText(discountTagEl, storeData.discount);
+        showEl(discountTagEl, !!storeData.discount);
 
         if (storeActionBtn) {
-            utils.setAttr(storeActionBtn, 'href', utils.buildStoreSearchUrl(storeName, productTitle));
+            // Is store ka asli (saaf) product link; link na ho to us store ka search-URL.
+            utils.setAttr(storeActionBtn, 'href', storeData.link || utils.buildStoreSearchUrl(storeName, storeData.title));
         }
 
-        if (imageEl && productImage) {
-            imageEl.setAttribute('src', productImage);
-            imageEl.setAttribute('alt', productTitle);
+        if (imageEl) {
+            imageEl.removeAttribute('data-fallback-used');
+            imageEl.setAttribute('src', storeData.image || searchApi.FALLBACK_IMAGE);
+            imageEl.setAttribute('alt', storeData.title);
         }
 
         if (storeData.price === lowestPrice) {
             utils.setText(diffTagEl, 'Sabse Sasta Deal');
             diffTagEl.classList.add('comparison-price-diff-lowest');
         } else {
-            var difference = storeData.price - lowestPrice;
-            utils.setText(diffTagEl, utils.formatPrice(difference) + ' Mehnga');
+            utils.setText(diffTagEl, utils.formatPrice(storeData.price - lowestPrice) + ' Mehnga');
             diffTagEl.classList.remove('comparison-price-diff-lowest');
         }
     }
 
     function syncComparisonGridWithSearchedProduct(product, prices) {
-        var allPrices = COMPARISON_CARD_CONFIG.map(function (config) {
-            return prices[config.store] ? prices[config.store].price : Infinity;
+        var availableStores = COMPARISON_CARD_CONFIG.filter(function (config) {
+            return prices[config.store] && prices[config.store].price;
         });
-        var lowestPrice = Math.min.apply(null, allPrices);
+        var lowestPrice = Math.min.apply(null, availableStores.map(function (config) {
+            return prices[config.store].price;
+        }));
 
         COMPARISON_CARD_CONFIG.forEach(function (config) {
             var storeData = prices[config.store];
-            if (!storeData) return;
-            updateComparisonCard(config.cardEl, config.store, storeData, lowestPrice, product.title, product.image);
+            var isAvailable = !!(storeData && storeData.price);
+            showEl(config.cardEl, isAvailable);          // jo store me product nahi, uska card chhupa
+            if (isAvailable) {
+                updateComparisonCard(config.cardEl, config.store, storeData, lowestPrice);
+            }
+        });
+
+        // Comparison tabhi dikhao jab kam se kam 2 stores par asli product ho.
+        showEl(dom.priceComparisonSection, availableStores.length >= 2);
+
+        // "Also Available on": sirf wo dusre stores jahan product sach me hai.
+        var otherStores = availableStores.map(function (c) { return c.store; })
+            .filter(function (storeName) { return storeName !== product.store; });
+        ['amazon', 'flipkart', 'meesho', 'myntra'].forEach(function (storeName) {
+            showEl(utils.qs('#also-available-' + storeName), otherStores.indexOf(storeName) !== -1);
+        });
+        showEl(dom.alsoAvailableBlock, otherStores.length > 0);
+    }
+
+    /* ------------------------------------------------------------
+       SUGGESTED PRODUCTS  ("You May Also Like")
+       ------------------------------------------------------------ */
+    var SUGGESTIONS_PAGE_SIZE = CFG.SUGGESTIONS_PAGE_SIZE || 12;
+    var suggestions = { list: [], rendered: 0 };
+
+    function isSuggestionsVisible() {
+        return !!(dom.suggestedSentinel && dom.suggestedSentinel.offsetParent !== null);
+    }
+
+    function loadMoreSuggestions() {
+        if (!dom.suggestedGrid || !productsApi) return;
+        if (!isSuggestionsVisible()) return;
+        if (suggestions.rendered >= suggestions.list.length) return;
+
+        var batch = suggestions.list.slice(suggestions.rendered, suggestions.rendered + SUGGESTIONS_PAGE_SIZE);
+        productsApi.renderProductsIntoGrid(dom.suggestedGrid, batch, true);
+        suggestions.rendered += batch.length;
+
+        // Wahi product "More Deals" grid me bhi (chhupa hua) ho sakta hai -> duplicate DOM ids hatao.
+        // (clicks data-product-id se chalte hain, id ki zarurat nahi)
+        utils.qsa('[id]', dom.suggestedGrid).forEach(function (el) { el.removeAttribute('id'); });
+
+        // sentinel abhi bhi screen ke paas ho (badi screen) to agla batch bhi load
+        window.requestAnimationFrame(function () {
+            if (suggestions.rendered < suggestions.list.length && isSuggestionsNearViewport()) {
+                loadMoreSuggestions();
+            }
         });
     }
 
+    function isSuggestionsNearViewport() {
+        if (!isSuggestionsVisible()) return false;
+        return dom.suggestedSentinel.getBoundingClientRect().top <= window.innerHeight + 600;
+    }
+
+    function clearSuggestions() {
+        suggestions = { list: [], rendered: 0 };
+        if (dom.suggestedGrid) dom.suggestedGrid.textContent = '';
+        showEl(dom.suggestedSection, false);
+    }
+
+    function renderSuggestions(product, prices) {
+        clearSuggestions();
+        if (!dom.suggestedSection || !dom.suggestedGrid || !productsApi) return;
+
+        // comparison me jo products already dikh rahe hain unhe dobara suggest nahi karte
+        var exclude = [];
+        Object.keys(prices).forEach(function (storeName) {
+            if (prices[storeName] && prices[storeName].id) exclude.push(prices[storeName].id);
+        });
+
+        suggestions.list = engine.getSuggestions(product, exclude);
+        if (!suggestions.list.length) return;
+
+        showEl(dom.suggestedSection, true);
+        loadMoreSuggestions();
+    }
+
+    if ('IntersectionObserver' in window && dom.suggestedSentinel) {
+        new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                if (entry.isIntersecting) loadMoreSuggestions();
+            });
+        }, { root: null, rootMargin: '600px 0px', threshold: 0 }).observe(dom.suggestedSentinel);
+    }
+
+    var suggestionsTicking = false;
+    window.addEventListener('scroll', function () {
+        if (suggestionsTicking) return;
+        suggestionsTicking = true;
+        window.requestAnimationFrame(function () {
+            suggestionsTicking = false;
+            if (suggestions.rendered < suggestions.list.length && isSuggestionsNearViewport()) {
+                loadMoreSuggestions();
+            }
+        });
+    }, { passive: true });
+
     document.addEventListener('crackshopping:searchResultsUpdated', function (event) {
         var detail = event.detail || {};
-        if (!detail.product || !detail.product.prices) return;
-        syncComparisonGridWithSearchedProduct(detail.product, detail.product.prices);
+        if (!detail.product || !detail.prices) return;
+        syncComparisonGridWithSearchedProduct(detail.product, detail.prices);
+        renderSuggestions(detail.product, detail.prices);
     });
 
-    document.addEventListener('crackshopping:categoryChanged', function () {
+    function hideSearchResultsAfterBrowse(resetError) {
         if (state.searchedProduct && dom.searchResultsSection) {
             utils.setAttr(dom.searchResultsSection, 'data-visibility', 'hidden');
             state.searchedProduct = null;
-            searchApi.clearSearchError();
+            if (resetError) searchApi.clearSearchError();
             if (window.CrackShopping.navigation) {
                 window.CrackShopping.navigation.setHeroTextVisibility(true);
             }
         }
-    });
-
-    document.addEventListener('crackshopping:keywordSearchApplied', function () {
-        if (state.searchedProduct && dom.searchResultsSection) {
-            utils.setAttr(dom.searchResultsSection, 'data-visibility', 'hidden');
-            state.searchedProduct = null;
-            searchApi.clearSearchError();
-            if (window.CrackShopping.navigation) {
-                window.CrackShopping.navigation.setHeroTextVisibility(true);
-            }
+        clearSuggestions();
+        // Home sections wapas dikhne lage: infinite scroll ko turant kaam par lagao.
+        if (window.CrackShopping.infiniteScroll) {
+            window.CrackShopping.infiniteScroll.loadMoreDeals();
         }
-    });
+    }
 
-    document.addEventListener('crackshopping:filtersApplied', function () {
-        if (state.searchedProduct && dom.searchResultsSection) {
-            utils.setAttr(dom.searchResultsSection, 'data-visibility', 'hidden');
-            state.searchedProduct = null;
-            if (window.CrackShopping.navigation) {
-                window.CrackShopping.navigation.setHeroTextVisibility(true);
-            }
-        }
-    });
+    document.addEventListener('crackshopping:categoryChanged', function () { hideSearchResultsAfterBrowse(true); });
+    document.addEventListener('crackshopping:keywordSearchApplied', function () { hideSearchResultsAfterBrowse(true); });
+    document.addEventListener('crackshopping:filtersApplied', function () { hideSearchResultsAfterBrowse(false); });
 
     function clearSelectedProductCardHighlight() {
         utils.qsa('.product-card.is-selected-in-modal').forEach(function (cardEl) {
@@ -2323,6 +3538,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     document.addEventListener('crackshopping:homeReset', function () {
         clearSelectedProductCardHighlight();
+        clearSuggestions();
 
         if (window.CrackShopping.comparisonModal) {
             window.CrackShopping.comparisonModal.closeProductComparisonModal();
@@ -2345,10 +3561,12 @@ document.addEventListener('DOMContentLoaded', function () {
     window.CrackShopping.sync = {
         syncComparisonGridWithSearchedProduct: syncComparisonGridWithSearchedProduct,
         clearSelectedProductCardHighlight: clearSelectedProductCardHighlight,
-        getCurrentAppSnapshot: getCurrentAppSnapshot
+        getCurrentAppSnapshot: getCurrentAppSnapshot,
+        renderSuggestions: renderSuggestions
     };
 
 });
+
 
 /* ============================================================
    PART 10 — Final Integration + Error Handling + Performance
@@ -2476,6 +3694,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 });
 
+
 /* ============================================================
    PART 11 — SEO: DYNAMIC JSON-LD PRODUCT SCHEMA
    (Amazon, Flipkart, Meesho, Myntra)
@@ -2500,6 +3719,9 @@ document.addEventListener('DOMContentLoaded', function () {
     // e.g. the Meesho headphones entry).
     var FALLBACK_IMAGE = 'crack-shopping.png';
 
+    // Har store ke itne products hi JSON-LD schema me jaate hain (page halka rakhne ke liye).
+    var SCHEMA_ITEMS_PER_STORE = 50;
+
     var STORE_LABELS = {
         amazon: 'Amazon',
         flipkart: 'Flipkart',
@@ -2516,16 +3738,17 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function resolveImageUrl(imageFile) {
-        if (!imageFile) {
-            return resolveUrl(FALLBACK_IMAGE);
-        }
-        return resolveUrl(IMAGE_BASE_PATH + imageFile);
+    if (!imageFile) { return resolveUrl(FALLBACK_IMAGE); }
+    if (/^https?:\/\//i.test(imageFile)) { return imageFile; }
+    return resolveUrl(IMAGE_BASE_PATH + imageFile);
     }
 
     // Builds one schema.org Product node (with a nested Offer) for a single
     // product entry from products.json.
     function buildProductSchema(item, storeKey) {
         var storeName = STORE_LABELS[storeKey] || storeKey;
+        // outgoing link hamesha saaf (purane tracking params hate hue)
+        var cleanLink = window.CRACK_SHOPPING_URL ? window.CRACK_SHOPPING_URL.sanitize(item.link, storeKey) : item.link;
         var hasLivePrice = (item.price !== null && item.price !== undefined);
         var effectivePrice = hasLivePrice ? item.price : item.mrp;
         var availability = hasLivePrice
@@ -2536,10 +3759,10 @@ document.addEventListener('DOMContentLoaded', function () {
             '@type': 'Product',
             'name': item.name,
             'image': [resolveImageUrl(item.image)],
-            'url': item.link,
+            'url': cleanLink,
             'offers': {
                 '@type': 'Offer',
-                'url': item.link,
+                'url': cleanLink,
                 'priceCurrency': 'INR',
                 'price': effectivePrice,
                 'availability': availability,
@@ -2594,30 +3817,24 @@ document.addEventListener('DOMContentLoaded', function () {
         Object.keys(STORE_LABELS).forEach(function (storeKey) {
             var items = productsData[storeKey];
             if (!items || !items.length) return;
+            // Poore 1500+ products head me daalna page ko bhaari karta hai; Google ko top deals kaafi hain.
+            items = items.filter(function (item) { return item.price !== null && item.price !== undefined; }).slice(0, SCHEMA_ITEMS_PER_STORE);
+            if (!items.length) return;
             var listSchema = buildItemListSchema(storeKey, items);
             injectJsonLd('jsonld-products-' + storeKey, listSchema);
         });
     }
 
     function loadProductsAndInjectSchema() {
-        if (!window.fetch) return; // very old browsers: skip gracefully
+        // products.json dobara download nahi hoti: loader ka same data use hota hai.
+        var ready = window.CRACK_SHOPPING_PRODUCTS_READY;
+        if (!ready || typeof ready.then !== 'function') return;
 
-        fetch(PRODUCTS_JSON_URL, { cache: 'no-store' })
-            .then(function (response) {
-                if (!response.ok) {
-                    throw new Error('products.json request failed with status ' + response.status);
-                }
-                return response.json();
-            })
-            .then(function (productsData) {
-                renderAllStoreSchemas(productsData);
-            })
-            .catch(function (err) {
-                // Fails silently for the visitor; logged for the developer.
-                // Common cause: opening index.html directly as a file:// URL
-                // instead of serving it from a local/live web server.
-                console.warn('[Crack Shopping] Could not load products.json for SEO schema:', err);
-            });
+        ready.then(function (productsData) {
+            if (productsData) renderAllStoreSchemas(productsData);
+        }).catch(function (err) {
+            console.warn('[Crack Shopping] Could not build SEO schema:', err);
+        });
     }
 
     if (document.readyState === 'loading') {
@@ -2627,6 +3844,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
 })();
+
 
 /* ============================================================
    PART 12 — Shared-link landing (?product=<id>)

@@ -2307,17 +2307,24 @@ body.modal-open {
         padding: 4px 7px;
     }
 }
-```css
 /* ==========================================
    CRACK SHOPPING - RESPONSIVE MOBILE DESIGN
    ========================================== */
 
-/* Prevent unwanted horizontal scrolling */
-html,
-body {
+/* Prevent unwanted horizontal scrolling.
+   NOTE: body par overflow-x: hidden nahi lagate - usse body "scroll container" ban jaata hai
+   aur sticky header / sticky ad-zones kaam karna band kar dete hain. clip scroll-container
+   nahi banata, html ka hidden viewport ko sambhaal leta hai. */
+html {
     width: 100%;
     max-width: 100%;
     overflow-x: hidden;
+}
+
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
 }
 
 img {
@@ -2694,3 +2701,185 @@ img {
 
 .product-share-feedback { position:fixed; left:50%; bottom:24px; z-index:2000; max-width:calc(100vw - 32px); padding:12px 18px; color:#fff; background:#202124; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.2); font-size:.9rem; opacity:0; pointer-events:none; transform:translate(-50%, 10px); transition:opacity .2s ease, transform .2s ease; text-align:center; }
 .product-share-feedback.is-visible { opacity:1; transform:translate(-50%, 0); }
+
+/* ============================================================
+   Search correction note + Suggested Products (You May Also Like)
+   ============================================================ */
+
+.search-correction-note {
+    padding: var(--spacing-xs, 4px) 0;
+}
+
+.search-correction-note strong {
+    color: var(--color-text-primary);
+}
+
+.suggested-products-subtext {
+    margin-top: calc(-1 * var(--spacing-sm, 8px));
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+}
+
+/* ============================================================
+   Quick Category Buttons - Mobile & Clothing (modern pills)
+   ============================================================ */
+
+.category-btn--mobile,
+.category-btn--clothing {
+    --qc-from: #2563EB;
+    --qc-to: #1D4ED8;
+    --qc-soft: #EFF4FF;
+    --qc-shadow: rgba(37, 99, 235, 0.35);
+    position: relative;
+    padding: 6px 14px 6px 6px;
+    gap: 10px;
+    background-color: var(--qc-soft);
+    border: 1.5px solid transparent;
+    background-clip: padding-box;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.category-btn--clothing {
+    --qc-from: #EC4899;
+    --qc-to: #DB2777;
+    --qc-soft: #FFF0F7;
+    --qc-shadow: rgba(219, 39, 119, 0.35);
+}
+
+/* icon ek gol badge me */
+.category-btn--mobile .category-btn-icon,
+.category-btn--clothing .category-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 1.05rem;
+    line-height: 1;
+    background: linear-gradient(135deg, var(--qc-from), var(--qc-to));
+    box-shadow: 0 3px 8px var(--qc-shadow);
+    transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.category-btn--mobile .category-btn-text,
+.category-btn--clothing .category-btn-text {
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.category-btn--mobile .category-btn-arrow,
+.category-btn--clothing .category-btn-arrow {
+    color: var(--qc-to);
+    font-size: 1.1rem;
+    font-weight: 700;
+    transition: transform 0.2s ease, color 0.2s ease;
+}
+
+/* hover */
+.category-btn--mobile:hover,
+.category-btn--clothing:hover {
+    background-color: var(--qc-soft);
+    border-color: var(--qc-from);
+    color: var(--qc-to);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px var(--qc-shadow);
+}
+
+.category-btn--mobile:hover .category-btn-icon,
+.category-btn--clothing:hover .category-btn-icon {
+    transform: scale(1.1) rotate(-6deg);
+}
+
+.category-btn--mobile:hover .category-btn-arrow,
+.category-btn--clothing:hover .category-btn-arrow {
+    transform: translateX(3px);
+}
+
+/* click dabate hi */
+.category-btn--mobile:active,
+.category-btn--clothing:active {
+    transform: translateY(0) scale(0.97);
+    box-shadow: 0 2px 6px var(--qc-shadow);
+}
+
+/* ACTIVE (selected) state */
+.category-btn--mobile.is-active,
+.category-btn--clothing.is-active {
+    background: linear-gradient(135deg, var(--qc-from), var(--qc-to));
+    border-color: transparent;
+    color: var(--color-white);
+    box-shadow: 0 6px 16px var(--qc-shadow);
+}
+
+.category-btn--mobile.is-active .category-btn-icon,
+.category-btn--clothing.is-active .category-btn-icon {
+    background: var(--color-white);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.category-btn--mobile.is-active .category-btn-arrow,
+.category-btn--clothing.is-active .category-btn-arrow {
+    color: var(--color-white);
+    transform: rotate(90deg);
+}
+
+.category-btn--mobile:focus-visible,
+.category-btn--clothing:focus-visible {
+    outline: 2px solid var(--qc-to);
+    outline-offset: 2px;
+}
+
+/* Mobile screens: row horizontally scroll hoti hai, buttons chhote aur touch-friendly */
+@media (max-width: 767.98px) {
+    .category-btn--mobile,
+    .category-btn--clothing {
+        padding: 5px 12px 5px 5px;
+        gap: 8px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+        scroll-snap-align: start;
+    }
+
+    .category-btn--mobile .category-btn-icon,
+    .category-btn--clothing .category-btn-icon {
+        width: 30px;
+        height: 30px;
+        font-size: 1rem;
+    }
+
+    /* hover-lift touch screens par chipka na rahe */
+    .category-btn--mobile:hover,
+    .category-btn--clothing:hover {
+        transform: none;
+    }
+}
+
+/* Desktop: thoda bada aur aaram se */
+@media (min-width: 1024px) {
+    .category-btn--mobile,
+    .category-btn--clothing {
+        padding: 7px 18px 7px 7px;
+        font-size: 0.95rem;
+    }
+
+    .category-btn--mobile .category-btn-icon,
+    .category-btn--clothing .category-btn-icon {
+        width: 36px;
+        height: 36px;
+        font-size: 1.15rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .category-btn--mobile,
+    .category-btn--clothing,
+    .category-btn--mobile .category-btn-icon,
+    .category-btn--clothing .category-btn-icon,
+    .category-btn--mobile .category-btn-arrow,
+    .category-btn--clothing .category-btn-arrow {
+        transition: none;
+    }
+}
