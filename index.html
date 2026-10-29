@@ -265,6 +265,7 @@
                             <div class="also-available-block" id="also-available-block">
                                 <p class="also-available-label" id="also-available-label">Also Available on</p>
                                 <div class="also-available-logos" id="also-available-logos">
+                                    <img src="amazon.png" alt="Amazon" class="also-available-logo" id="also-available-amazon" style="display: none;">
                                     <img src="flipkart.png" alt="Flipkart" class="also-available-logo" id="also-available-flipkart">
                                     <img src="meesho.png" alt="Meesho" class="also-available-logo" id="also-available-meesho">
                                     <img src="myntra.png" alt="Myntra" class="also-available-logo" id="also-available-myntra">
@@ -401,11 +402,39 @@
                         </div>
                     </section>
 
+                                    <!-- ===================== SUGGESTED PRODUCTS / YOU MAY ALSO LIKE ===================== -->
+                    <section class="product-deals-section suggested-products-section" id="suggested-products-section" style="display: none;">
+                        <div class="section-heading-row">
+                            <h2 class="section-heading" id="suggested-products-heading">
+                                <span class="section-heading-icon">&#10024;</span>
+                                You May Also Like
+                            </h2>
+                        </div>
+                        <p class="suggested-products-subtext" id="suggested-products-subtext">Suggested products from the same category</p>
+                        <div class="product-grid" id="suggested-products-grid">
+                            <!-- Filled by script.js with real products from the same category (loads more on scroll) -->
+                        </div>
+                        <!-- Infinite scroll load target -->
+                        <div class="infinite-scroll-sentinel" id="suggested-products-sentinel"></div>
+                    </section>
+
                 </section>
 
                 <!-- ===================== CATEGORY NAVIGATION BAR ===================== -->
                 <section class="category-nav-section" id="category-nav-section">
                     <div class="category-quick-buttons" id="category-quick-buttons">
+
+                        <button type="button" class="category-btn category-btn--mobile" id="category-btn-mobile" data-category="mobiles" aria-pressed="false" aria-label="Mobile">
+                            <span class="category-btn-icon">&#128241;</span>
+                            <span class="category-btn-text">Mobile</span>
+                            <span class="category-btn-arrow">&#8250;</span>
+                        </button>
+
+                        <button type="button" class="category-btn category-btn--clothing" id="category-btn-clothing" data-category="clothing" aria-pressed="false" aria-label="Clothing">
+                            <span class="category-btn-icon">&#128085;</span>
+                            <span class="category-btn-text">Clothing</span>
+                            <span class="category-btn-arrow">&#8250;</span>
+                        </button>
 
                         <button type="button" class="category-btn" id="category-btn-toy" data-category="toy">
                             <span class="category-btn-icon">&#129514;</span>
